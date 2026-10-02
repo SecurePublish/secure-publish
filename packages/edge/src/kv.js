@@ -276,7 +276,7 @@ export function formatPublishedLabel(iso, timeZone = "America/Sao_Paulo") {
       hour12: false,
     }).formatToParts(d);
     const get = (t) => parts.find((p) => p.type === t)?.value || "";
-    return `${get("day")}/${get("month")}/${get("year")} · ${get("hour")}:${get("minute")} BRT`;
+    return `${get("day")}/${get("month")}/${get("year")} · ${get("hour")}:${get("minute")}`;
   } catch {
     return undefined;
   }

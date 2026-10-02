@@ -121,10 +121,10 @@ describe("API shape helpers", () => {
     assert.ok(viewers[0].last);
   });
 
-  it("formatPublishedLabel returns BRT-ish label", () => {
+  it("formatPublishedLabel returns a local Sao Paulo label without timezone suffix", () => {
     const label = formatPublishedLabel("2026-10-02T03:18:00.000Z");
-    assert.ok(label.includes("2026"));
-    assert.ok(label.includes("BRT"));
+    assert.equal(label, "02/10/2026 · 00:18");
+    assert.ok(!label.includes("BRT"));
   });
 });
 
