@@ -1,0 +1,213 @@
+/**
+ * Route-shape / auth gate tests with a minimal in-memory KV + fetch handler.
+ * SSO_DEV_BYPASS used only in these unit tests (never default on in wrangler).
+ */
+import { describe, it, before } from "node:test";
+import assert from "node:assert/strict";
+import worker from "../src/worker.js";
+
+function memoryKv(initial = {}) {
+  const store = new Map(Object.entries(initial));
+  return {
+    async get(key) {
+      return store.has(key) ? store.get(key) : null;
+    },
+    async put(key, value) {
+      store.set(key, value);
+    },
+    async delete(key) {
+      store.delete(key);
+    },
+    async list({ prefix = "", cursor, limit = 1000 } = {}) {
+      const keys = [...store.keys()]
+        .filter((k) => k.startsWith(prefix))
+        .sort()
+        .map((name) => ({ name }));
+      return { keys: keys.slice(0, limit), list_complete: true, cursor: undefined };
+    },
+    _store: store,
+  };
+}
+
+const PANEL_ID = "aaaaaaaaaaaaaaaaaaaaaaaa";
+const PANEL_OTHER = "bbbbbbbbbbbbbbbbbbbbbbbb";
+
+describe("API routes — Marcus checklist", () => {
+  let env;
+
+  before(() => {
+    const panels = memoryKv({
+      [PANEL_ID]: JSON.stringify({
+        v: 1,
+        title: "Mine",
+        publishedAt: "2026-10-02T03:18:00-03:00",
+        publisherEmail: "dev@localhost",
+        access: { mode: "company", domains: ["localhost"] },
+        html: "<html>ok</html>",
+      }),
+      [PANEL_OTHER]: JSON.stringify({
+        v: 1,
+        title: "Other",
+        publishedAt: "2026-10-01T00:00:00Z",
+        publisherEmail: "other@acme.example",
+        access: { mode: "company", domains: ["acme.example"] },
+        html: "<html>x</html>",
+      }),
+      [`idx:pub:dev@localhost`]: JSON.stringify([PANEL_ID]),
+      [`idx:domain:localhost`]: JSON.stringify([PANEL_ID]),
+    });
+    env = {
+      PANELS: panels,
+      SSO_DEV_BYPASS: "1",
+      CONSOLE_ORIGIN: "https://console.pages.dev",
+      OAUTH_ALLOWED_DOMAINS: "localhost",
+    };
+  });
+
+  it("(1) /api/me without bypass and without cookie → 401 when SSO none", async () => {
+    const locked = {
+      PANELS: env.PANELS,
+      CONSOLE_ORIGIN: env.CONSOLE_ORIGIN,
+      // no SSO_DEV_BYPASS, no secrets → mode none
+    };
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/me", {
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      locked
+    );
+    assert.equal(res.status, 401);
+  });
+
+  it("(1) /api/me with session (dev-bypass) returns contract shape", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/me", {
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      env
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.email, "dev@localhost");
+    assert.equal(body.idp, "dev-bypass");
+    assert.equal(body.domain, "localhost");
+    assert.ok("host" in body);
+    assert.equal(res.headers.get("Access-Control-Allow-Origin"), "https://console.pages.dev");
+    assert.equal(res.headers.get("Access-Control-Allow-Credentials"), "true");
+  });
+
+  it("GET /api/panels?scope=mine returns panels array shape", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/panels?scope=mine", {
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      env
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.panels));
+    assert.ok("host" in body);
+    const p = body.panels.find((x) => x.id === PANEL_ID);
+    assert.ok(p);
+    assert.equal(p.publisherEmail, "dev@localhost");
+    assert.equal(p.mode, "company");
+    assert.ok(Array.isArray(p.allowlist));
+    assert.ok(Array.isArray(p.viewers));
+    assert.equal(typeof p.views, "number");
+  });
+
+  it("(2) PATCH access forbidden for non-publisher", async () => {
+    const res = await worker.fetch(
+      new Request(`https://worker.test/api/panels/${PANEL_OTHER}/access`, {
+        method: "PATCH",
+        headers: {
+          Origin: "https://console.pages.dev",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ mode: "allowlist", allowlist: ["dev@localhost"] }),
+      }),
+      env
+    );
+    assert.equal(res.status, 403);
+  });
+
+  it("(2) PATCH access ok for publisher", async () => {
+    const res = await worker.fetch(
+      new Request(`https://worker.test/api/panels/${PANEL_ID}/access`, {
+        method: "PATCH",
+        headers: {
+          Origin: "https://console.pages.dev",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          mode: "allowlist",
+          allowlist: ["dev@localhost"],
+          sendInvite: true,
+        }),
+      }),
+      env
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.panel.mode, "allowlist");
+    assert.deepEqual(body.panel.allowlist, ["dev@localhost"]);
+    assert.equal(body.inviteStub.queued, false);
+  });
+
+  it("PUT /api/hosting/subdomain returns { host }", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/hosting/subdomain", {
+        method: "PUT",
+        headers: {
+          Origin: "https://console.pages.dev",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ slug: "wise" }),
+      }),
+      env
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.host, "wise.securepublish.work");
+  });
+
+  it("(5) PUT /api/hosting/custom claims but does not verify", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/hosting/custom", {
+        method: "PUT",
+        headers: {
+          Origin: "https://console.pages.dev",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ hostname: "dash.acme.example" }),
+      }),
+      env
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.customVerified, false);
+    assert.ok(body.verify);
+  });
+
+  it("(3) CORS preflight rejects unknown origin", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/me", {
+        method: "OPTIONS",
+        headers: { Origin: "https://evil.example" },
+      }),
+      env
+    );
+    assert.equal(res.status, 403);
+  });
+
+  it("(5) unverified custom Host cannot serve panels", async () => {
+    const res = await worker.fetch(
+      new Request(`https://dash.acme.example/${PANEL_ID}`, {
+        headers: { Host: "dash.acme.example" },
+      }),
+      env
+    );
+    assert.equal(res.status, 403);
+  });
+});

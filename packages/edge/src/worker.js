@@ -8,28 +8,56 @@
  *       company | org  → email domain allowlist (OAUTH_ALLOWED_DOMAINS / record.domains)
  *                        NOT Workspace/Entra/GitHub Org membership
  *       allowlist      → explicit emails from CLI --to
+ *
+ * Console API: see ../README.md and secure-publish-app/API-CONTRACT.md
  */
 
 import { requireSsoSession, handleAuthRoutes, ssoMode } from "./sso.js";
 import { checkPanelAccess, accessDeniedBody } from "./acl.js";
-
-function decodeRecord(raw) {
-  if (raw == null) return null;
-  try {
-    const j = JSON.parse(raw);
-    if (j && typeof j.html === "string") return j;
-  } catch {
-    /* legacy raw HTML from panel-gate era */
-  }
-  return { v: 0, html: raw, access: { mode: "company", domains: [] } };
-}
+import { handleApiRoutes } from "./api.js";
+import { decodeRecord, recordView, getTenant, PANEL_ID_RE } from "./kv.js";
 
 async function resolvePanel(key, panels) {
   if (!key || typeof key !== "string") return { ok: false };
-  if (!/^[0-9a-f]{24}$/i.test(key)) return { ok: false };
+  if (!PANEL_ID_RE.test(key)) return { ok: false };
   const raw = await panels.get(key);
   if (raw == null) return { ok: false };
   return { ok: true, record: decodeRecord(raw) };
+}
+
+/**
+ * Host-header gate for custom domains (Marcus #5).
+ * Subdomain / workers.dev always OK. Custom host only if tenant.customVerified.
+ */
+async function assertHostAllowed(request, env) {
+  let host = (request.headers.get("Host") || "").split(":")[0].toLowerCase();
+  if (!host) {
+    try {
+      host = new URL(request.url).hostname.toLowerCase();
+    } catch {
+      host = "";
+    }
+  }
+  if (!host) return { ok: true };
+  if (host.endsWith(".workers.dev") || host.endsWith(".securepublish.work")) {
+    return { ok: true };
+  }
+  if (host === "localhost" || host === "127.0.0.1") return { ok: true };
+
+  const owner = await env.PANELS.get(`host:custom:${host}`);
+  if (!owner) {
+    return { ok: false, status: 404, body: "Unknown host.\n" };
+  }
+  const tenant = await getTenant(env.PANELS, owner);
+  if (!tenant?.customVerified) {
+    return {
+      ok: false,
+      status: 403,
+      body:
+        "Custom domain reserved but not verified. Complete DNS ownership check before serving.\n",
+    };
+  }
+  return { ok: true };
 }
 
 export default {
@@ -38,6 +66,17 @@ export default {
 
     const authRes = await handleAuthRoutes(request, env);
     if (authRes) return authRes;
+
+    const apiRes = await handleApiRoutes(request, env);
+    if (apiRes) return apiRes;
+
+    const hostGate = await assertHostAllowed(request, env);
+    if (!hostGate.ok) {
+      return new Response(hostGate.body || "Forbidden\n", {
+        status: hostGate.status || 403,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
 
     const parts = url.pathname.split("/").filter(Boolean);
 
@@ -51,6 +90,8 @@ export default {
           `SSO mode: ${mode}`,
           "V1: company-wide = email domain (not org membership).",
           "",
+          "Console API: /api/me /api/panels /api/hosting/* (SSO required)",
+          "OAuth: /auth/{google|microsoft|github}",
           "Use /{panel-id} após login SSO.",
           "Publish: secure-publish publish <file.html> [--to email,email]",
           "",
@@ -91,6 +132,13 @@ export default {
           "x-secure-publish-acl": acl.reason || "denied",
         },
       });
+    }
+
+    // Best-effort view analytics (PII stored server-side; API exposes only to SSO tenant).
+    try {
+      await recordView(env.PANELS, panelId, sso.user?.email);
+    } catch {
+      /* non-fatal */
     }
 
     const headers = {

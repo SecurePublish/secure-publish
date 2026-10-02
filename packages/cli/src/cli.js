@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import http from "node:http";
 import { loadConfig, configHints } from "./config.js";
 import { loadRegistry, upsertPanel, removePanel } from "./registry.js";
-import { kvPut, kvDelete, kvList, verifyToken } from "./cf-api.js";
+import { kvPut, kvGet, kvDelete, kvList, verifyToken } from "./cf-api.js";
 import { mockPut, mockGet, mockDelete, mockList } from "./mock-store.js";
 import {
   parseToFlag,
@@ -107,14 +107,43 @@ function publicUrl(cfg, key) {
   return `${base}/${key}`;
 }
 
-function encodeRecord({ html, title, access, publishedAt }) {
-  return JSON.stringify({
+
+async function appendKvIndex(cfg, indexKey, panelId) {
+  let list = [];
+  try {
+    const raw = await kvGet({
+      accountId: cfg.accountId,
+      namespaceId: cfg.kvNamespaceId,
+      token: cfg.apiToken,
+      key: indexKey,
+    });
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) list = parsed.map(String);
+    }
+  } catch {
+    /* empty / missing index */
+  }
+  if (!list.includes(panelId)) list.push(panelId);
+  await kvPut({
+    accountId: cfg.accountId,
+    namespaceId: cfg.kvNamespaceId,
+    token: cfg.apiToken,
+    key: indexKey,
+    value: JSON.stringify(list),
+  });
+}
+
+function encodeRecord({ html, title, access, publishedAt, publisherEmail }) {
+  const rec = {
     v: 1,
     title,
     publishedAt,
     access,
     html,
-  });
+  };
+  if (publisherEmail) rec.publisherEmail = publisherEmail;
+  return JSON.stringify(rec);
 }
 
 function decodeRecord(raw) {
@@ -168,6 +197,13 @@ async function cmdPublish(fileArg, flags, cfg) {
     path.basename(filePath, path.extname(filePath)) ||
     "untitled";
   const publishedAt = new Date().toISOString();
+  const publisherEmail = (
+    process.env.SECURE_PUBLISH_PUBLISHER_EMAIL ||
+    flags.publisher ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
   const record = {
     v: 1,
     title,
@@ -175,6 +211,7 @@ async function cmdPublish(fileArg, flags, cfg) {
     access,
     html,
   };
+  if (publisherEmail) record.publisherEmail = publisherEmail;
 
   const lang = flags.lang === "en" ? "en" : "pt";
 
@@ -183,6 +220,21 @@ async function cmdPublish(fileArg, flags, cfg) {
       `Publishing ${path.basename(filePath)} → mock KV key ${key}…\n`
     );
     mockPut(key, record);
+    if (publisherEmail) {
+      const pubIdx = `idx:pub:${publisherEmail}`;
+      const prev = mockGet(pubIdx);
+      const list = Array.isArray(prev) ? prev.map(String) : [];
+      if (!list.includes(key)) list.push(key);
+      mockPut(pubIdx, list);
+      const dom = publisherEmail.split("@")[1];
+      if (dom) {
+        const dIdx = `idx:domain:${dom}`;
+        const dprev = mockGet(dIdx);
+        const dlist = Array.isArray(dprev) ? dprev.map(String) : [];
+        if (!dlist.includes(key)) dlist.push(key);
+        mockPut(dIdx, dlist);
+      }
+    }
   } else {
     process.stderr.write(
       `Publishing ${path.basename(filePath)} → KV key ${key}…\n`
@@ -194,6 +246,14 @@ async function cmdPublish(fileArg, flags, cfg) {
       key,
       value: encodeRecord(record),
     });
+    // Console API indexes (compatible with packages/edge/src/kv.js)
+    if (publisherEmail) {
+      await appendKvIndex(cfg, `idx:pub:${publisherEmail}`, key);
+      const dom = publisherEmail.split("@")[1];
+      if (dom) await appendKvIndex(cfg, `idx:domain:${dom}`, key);
+    } else if (access.mode === "company" && access.domains?.[0]) {
+      await appendKvIndex(cfg, `idx:domain:${access.domains[0]}`, key);
+    }
   }
 
   const url = publicUrl({ ...cfg, mock: useMock }, key);

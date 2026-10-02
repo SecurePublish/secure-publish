@@ -184,6 +184,26 @@ npx wrangler secret put OAUTH_ALLOWED_DOMAINS   # ex: empresa.com
 
 Não defina `TEAM_DOMAIN`/`POLICY_AUD` se quiser modo `oauth` puro (Access tem prioridade).
 
+
+## Console API (Worker)
+
+Cameron contract: [`docs/API-CONTRACT.md`](docs/API-CONTRACT.md). Edge implementation: [`packages/edge/README.md`](packages/edge/README.md).
+
+| Method | Path |
+|--------|------|
+| GET | `/api/me` |
+| GET | `/api/panels?scope=mine\|company` |
+| PATCH | `/api/panels/:id/access` (publisher only) |
+| PUT | `/api/hosting/subdomain` · `/api/hosting/custom` |
+| GET | `/auth/{google\|microsoft\|github}` |
+
+Auth: SSO session cookie / Access JWT. CORS: exact `CONSOLE_ORIGIN` + credentials. Custom domains are claimed but **not served** until ownership is verified.
+
+```bash
+cd packages/edge && npm test && npx wrangler dev
+# local: packages/edge/.dev.vars with SSO_DEV_BYPASS=1 (never production)
+```
+
 ## Layout
 
 ```text

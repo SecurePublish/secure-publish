@@ -11,3 +11,5 @@ dist/
 .DS_Store
 cloudflared
 .session_secret
+.dev.vars
+packages/edge/.dev.vars

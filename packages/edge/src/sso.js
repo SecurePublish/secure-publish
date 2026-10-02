@@ -7,6 +7,8 @@
  *   none   — fail closed (no HTML served)
  *
  * Optional local-only: SSO_DEV_BYPASS=1 (never set in production).
+ *
+ * Console contract also uses GET /auth/{google|microsoft|github} (alias of /_auth/start/…).
  */
 
 import { jwtVerify, createRemoteJWKSet } from "jose";
@@ -37,14 +39,24 @@ function hasAnyOauthProvider(env) {
   );
 }
 
+function consoleOrigins(env) {
+  const raw = env.CONSOLE_ORIGIN || env.CONSOLE_ORIGINS || "";
+  return String(raw)
+    .split(",")
+    .map((s) => s.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+}
+
 /**
- * Enforce a real SSO session before serving panel HTML.
+ * Enforce a real SSO session.
  * @param {Request} request
  * @param {Record<string, string | undefined>} env
+ * @param {{ api?: boolean }} [opts] — api: true → 401 JSON, never redirect
  * @returns {Promise<{ ok: boolean, redirectUrl?: string, status?: number, body?: string, user?: { email?: string, provider?: string } }>}
  */
-export async function requireSsoSession(request, env) {
+export async function requireSsoSession(request, env, opts = {}) {
   const mode = ssoMode(env);
+  const forApi = Boolean(opts.api);
 
   if (mode === "dev-bypass") {
     return { ok: true, user: { email: "dev@localhost", provider: "dev-bypass" } };
@@ -53,17 +65,22 @@ export async function requireSsoSession(request, env) {
   if (mode === "none") {
     return {
       ok: false,
-      status: 403,
-      body:
-        "Secure Publish: SSO não configurado.\n" +
-        "A chave na URL identifica o painel; não autentica o visitante.\n" +
-        "Configure Cloudflare Access (TEAM_DOMAIN + POLICY_AUD) ou OAuth no Worker.\n" +
-        "Ver README → secção «Ligar SSO no dashboard».\n",
+      status: forApi ? 401 : 403,
+      body: forApi
+        ? "unauthorized"
+        : "Secure Publish: SSO não configurado.\n" +
+          "A chave na URL identifica o painel; não autentica o visitante.\n" +
+          "Configure Cloudflare Access (TEAM_DOMAIN + POLICY_AUD) ou OAuth no Worker.\n" +
+          "Ver README → secção «Ligar SSO no dashboard».\n",
     };
   }
 
   if (mode === "access") {
-    return verifyAccessJwt(request, env);
+    const result = await verifyAccessJwt(request, env);
+    if (!result.ok && forApi) {
+      return { ok: false, status: 401, body: "unauthorized" };
+    }
+    return result;
   }
 
   // oauth
@@ -78,11 +95,15 @@ export async function requireSsoSession(request, env) {
         return {
           ok: false,
           status: 403,
-          body: "Acesso negado: domínio de e-mail não autorizado.\n",
+          body: forApi ? "domain_not_allowed" : "Acesso negado: domínio de e-mail não autorizado.\n",
         };
       }
     }
     return { ok: true, user: { email: session.email, provider: session.provider } };
+  }
+
+  if (forApi) {
+    return { ok: false, status: 401, body: "unauthorized" };
   }
 
   const url = new URL(request.url);
@@ -103,7 +124,6 @@ async function verifyAccessJwt(request, env) {
   const token = request.headers.get("cf-access-jwt-assertion");
 
   if (!token) {
-    // Access normalmente redireciona antes do Worker; se chegou sem JWT → negar.
     return {
       ok: false,
       status: 403,
@@ -114,9 +134,7 @@ async function verifyAccessJwt(request, env) {
   }
 
   try {
-    const JWKS = createRemoteJWKSet(
-      new URL(`${teamDomain}/cdn-cgi/access/certs`)
-    );
+    const JWKS = createRemoteJWKSet(new URL(`${teamDomain}/cdn-cgi/access/certs`));
     const { payload } = await jwtVerify(token, JWKS, {
       issuer: teamDomain,
       audience: aud,
@@ -141,9 +159,10 @@ async function verifyAccessJwt(request, env) {
       ok: true,
       user: {
         email,
-        provider: typeof payload.identity_provider === "string"
-          ? payload.identity_provider
-          : "cloudflare-access",
+        provider:
+          typeof payload.identity_provider === "string"
+            ? payload.identity_provider
+            : "cloudflare-access",
       },
     };
   } catch {
@@ -155,7 +174,7 @@ async function verifyAccessJwt(request, env) {
   }
 }
 
-/* ─── OAuth routes (alternative to Access) ─── */
+/* ─── OAuth routes ─── */
 
 const PROVIDERS = {
   google: {
@@ -186,13 +205,28 @@ const PROVIDERS = {
 };
 
 /**
- * Handle /_auth/* when SSO mode is oauth.
- * @param {Request} request
- * @param {Record<string, string | undefined>} env
- * @returns {Promise<Response | null>} null if not an auth route
+ * Handle /_auth/* and contract /auth/{provider}.
+ * @returns {Promise<Response | null>}
  */
 export async function handleAuthRoutes(request, env) {
   const url = new URL(request.url);
+
+  // Cameron contract: GET /auth/{google|microsoft|github}
+  const contractStart = url.pathname.match(/^\/auth\/(google|github|microsoft)\/?$/);
+  if (contractStart) {
+    if (ssoMode(env) !== "oauth" && ssoMode(env) !== "dev-bypass") {
+      return new Response(
+        "OAuth Worker não está ativo. Configure SESSION_SECRET + CLIENT_ID/SECRET.\n",
+        { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } }
+      );
+    }
+    // Map ?next= → return_to (console may pass absolute CONSOLE_ORIGIN URL)
+    if (url.searchParams.has("next") && !url.searchParams.has("return_to")) {
+      url.searchParams.set("return_to", url.searchParams.get("next"));
+    }
+    return oauthStart(url, env, contractStart[1]);
+  }
+
   if (!url.pathname.startsWith("/_auth/")) return null;
 
   if (ssoMode(env) !== "oauth") {
@@ -216,7 +250,7 @@ export async function handleAuthRoutes(request, env) {
       status: 200,
       headers: {
         "content-type": "text/plain; charset=utf-8",
-        "set-cookie": clearSessionCookie(),
+        "set-cookie": clearSessionCookie(env),
       },
     });
   }
@@ -271,7 +305,7 @@ function oauthStart(url, env, provider) {
   if (!clientId) {
     return new Response(`Provedor ${provider} não configurado.\n`, { status: 503 });
   }
-  const returnTo = url.searchParams.get("return_to") || "/";
+  const returnTo = url.searchParams.get("return_to") || url.searchParams.get("next") || "/";
   const redirectUri = `${url.origin}/_auth/callback/${provider}`;
   const state = encodeState({ returnTo, provider, n: crypto.randomUUID() });
 
@@ -358,10 +392,11 @@ async function oauthCallback(request, env, provider) {
 
   const cookie = await mintSessionCookie(
     { email, provider, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SEC },
-    env.SESSION_SECRET
+    env.SESSION_SECRET,
+    env
   );
 
-  const returnTo = safeReturnTo(state.returnTo);
+  const returnTo = safeReturnTo(state.returnTo, env);
   return new Response(null, {
     status: 302,
     headers: {
@@ -371,11 +406,6 @@ async function oauthCallback(request, env, provider) {
   });
 }
 
-/**
- * @param {string} provider
- * @param {typeof PROVIDERS[string]} cfg
- * @param {string} accessToken
- */
 async function fetchUserEmail(provider, cfg, accessToken) {
   if (provider === "github") {
     const emailsRes = await fetch(cfg.emailUrl, {
@@ -411,7 +441,6 @@ async function fetchUserEmail(provider, cfg, accessToken) {
     return me.mail || me.userPrincipalName || null;
   }
 
-  // google
   const res = await fetch(cfg.userUrl, {
     headers: { authorization: `Bearer ${accessToken}` },
   });
@@ -420,10 +449,20 @@ async function fetchUserEmail(provider, cfg, accessToken) {
   return me.email || null;
 }
 
-function safeReturnTo(path) {
+/**
+ * Relative paths on Worker, or absolute URLs only if origin ∈ CONSOLE_ORIGIN.
+ */
+function safeReturnTo(path, env) {
   if (!path || typeof path !== "string") return "/";
-  if (!path.startsWith("/") || path.startsWith("//")) return "/";
-  return path;
+  if (path.startsWith("/") && !path.startsWith("//")) return path;
+  try {
+    const u = new URL(path);
+    const allowed = consoleOrigins(env);
+    if (allowed.includes(u.origin)) return u.toString();
+  } catch {
+    /* ignore */
+  }
+  return "/";
 }
 
 function encodeState(obj) {
@@ -438,18 +477,26 @@ function decodeState(s) {
 
 /* ─── signed session cookie (Web Crypto HMAC) ─── */
 
-async function mintSessionCookie(payload, secret) {
+function cookieSameSite(env) {
+  // Cross-origin console (Pages) needs None; same-site Worker UI can use Lax.
+  if (consoleOrigins(env).length) return "None";
+  return "Lax";
+}
+
+async function mintSessionCookie(payload, secret, env = {}) {
   const body = btoa(JSON.stringify(payload))
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
   const sig = await hmacSign(body, secret);
   const value = `${body}.${sig}`;
-  return `${COOKIE_NAME}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_TTL_SEC}`;
+  const sameSite = cookieSameSite(env);
+  return `${COOKIE_NAME}=${value}; Path=/; HttpOnly; Secure; SameSite=${sameSite}; Max-Age=${SESSION_TTL_SEC}`;
 }
 
-function clearSessionCookie() {
-  return `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+function clearSessionCookie(env = {}) {
+  const sameSite = cookieSameSite(env);
+  return `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=${sameSite}; Max-Age=0`;
 }
 
 async function readSessionCookie(request, secret) {
@@ -488,3 +535,6 @@ function timingSafeEqual(a, b) {
   for (let i = 0; i < a.length; i++) out |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return out === 0;
 }
+
+/** Test/helper export */
+export { readSessionCookie, mintSessionCookie, COOKIE_NAME };

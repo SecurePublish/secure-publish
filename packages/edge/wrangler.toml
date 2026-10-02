@@ -9,9 +9,13 @@ workers_dev = true
 [[kv_namespaces]]
 binding = "PANELS"
 id = "46d61ee3d1f7410fa081e383b776934a"
+preview_id = "46d61ee3d1f7410fa081e383b776934a"
 
-# ─── SSO (prefer Cloudflare Access) ───
+# ─── Console CORS (exact Pages origin(s), comma-separated) ───
 # [vars]
+# CONSOLE_ORIGIN = "https://secure-publish-app.pages.dev"
+#
+# ─── SSO (prefer Cloudflare Access) ───
 # TEAM_DOMAIN = "https://YOUR_TEAM.cloudflareaccess.com"
 # POLICY_AUD = "YOUR_AUD_TAG"
 #
@@ -21,5 +25,5 @@ id = "46d61ee3d1f7410fa081e383b776934a"
 # Worker OAuth secrets via `wrangler secret put`:
 #   SESSION_SECRET, GOOGLE_*, GITHUB_*, MICROSOFT_*
 #
-# Local only (NEVER production):
+# Local only (NEVER production / never default on):
 #   SSO_DEV_BYPASS = "1"
