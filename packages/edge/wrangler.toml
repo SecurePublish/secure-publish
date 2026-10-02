@@ -11,19 +11,27 @@ binding = "PANELS"
 id = "46d61ee3d1f7410fa081e383b776934a"
 preview_id = "46d61ee3d1f7410fa081e383b776934a"
 
+# ─── Custom domains / routes (enable AFTER DNS NS for securepublish.work is active) ───
+# Prefer: Cloudflare Dashboard → Workers → secure-publish → Domains & Routes
+#   → Add Custom Domain: *.securepublish.work  (and optionally apex)
+# Or uncomment routes below and: npx wrangler deploy
+# See docs/DEPLOY-WILDCARD.md
+#
+# [[routes]]
+# pattern = "*.securepublish.work/*"
+# zone_name = "securepublish.work"
+#
+# [[routes]]
+# pattern = "securepublish.work/*"
+# zone_name = "securepublish.work"
+
 # ─── Console CORS (exact Pages origin(s), comma-separated) ───
-# [vars]
-# CONSOLE_ORIGIN = "https://secure-publish-app.pages.dev"
-#
-# ─── SSO (prefer Cloudflare Access) ───
-# TEAM_DOMAIN = "https://YOUR_TEAM.cloudflareaccess.com"
-# POLICY_AUD = "YOUR_AUD_TAG"
-#
-# V1 company-wide ACL = email domain allowlist (NOT org membership):
-# OAUTH_ALLOWED_DOMAINS = "empresa.com"
-#
-# Worker OAuth secrets via `wrangler secret put`:
-#   SESSION_SECRET, GOOGLE_*, GITHUB_*, MICROSOFT_*
-#
-# Local only (NEVER production / never default on):
-#   SSO_DEV_BYPASS = "1"
+# Interim: Pages + local pairing. After DNS: add https://app.securepublish.work
+[vars]
+OAUTH_ALLOWED_DOMAINS = "wises.com.br"
+CONSOLE_ORIGIN = "https://app.securepublish.work,https://secure-publish-app.pages.dev,http://127.0.0.1:8765"
+
+# ─── SSO (prefer Cloudflare Access) — usually secrets, not vars ───
+# TEAM_DOMAIN / POLICY_AUD via dashboard or wrangler secret/var
+# Worker OAuth secrets: wrangler secret put SESSION_SECRET GOOGLE_* GITHUB_* MICROSOFT_*
+# Local only (NEVER production): SSO_DEV_BYPASS=1 in .dev.vars

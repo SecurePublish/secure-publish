@@ -381,18 +381,44 @@ async function cmdDoctor(cfg) {
   if (cfg.mock) {
     lines.push("");
     lines.push("Status: mock mode — Cloudflare not required.");
+    lines.push("Next: npm run e2e:mock  OR  publish … --mock && mock-serve");
   } else if (missing.length) {
     lines.push("");
     lines.push(`Status: incomplete — missing ${missing.join(", ")}`);
-    lines.push("Create ~/.secure-publish/config.json or .secure-publish.json");
+    lines.push("");
+    lines.push("Next steps (no secrets in git / chat):");
+    if (!cfg.apiToken) {
+      lines.push("  1. Ask John/ops for CLOUDFLARE_API_TOKEN (Workers KV Edit).");
+      lines.push("     export CLOUDFLARE_API_TOKEN=…   # never commit");
+    }
+    if (!cfg.accountId) {
+      lines.push("  2. export CLOUDFLARE_ACCOUNT_ID=…  (dash.cloudflare.com)");
+    }
+    if (!cfg.kvNamespaceId) {
+      lines.push("  3. export SECURE_PUBLISH_KV_NAMESPACE_ID=…  (or wrangler kv namespace list)");
+    }
+    lines.push("  Or copy .env.example → .env / ~/.secure-publish/config.json");
+    lines.push("  Without a token yet: SECURE_PUBLISH_MOCK=1 for local E2E.");
+    if (!cfg.baseUrl) {
+      lines.push("");
+      lines.push("  Interim BASE_URL (DNS wildcard pending):");
+      lines.push("    export SECURE_PUBLISH_BASE_URL=https://secure-publish.clovist.workers.dev");
+      lines.push("  Future: https://{slug}.securepublish.work  — docs/DEPLOY-WILDCARD.md");
+    }
   } else {
     lines.push("");
     lines.push("Status: config looks complete. Verifying token…");
     try {
       const v = await verifyToken(cfg.apiToken);
       lines.push(`Token verify: OK (${v.result?.status || "active"})`);
+      lines.push("");
+      lines.push("Next: secure-publish publish examples/panel-vendas.html --title \"…\"");
+      if (!cfg.baseUrl) {
+        lines.push("  Tip: set SECURE_PUBLISH_BASE_URL=https://secure-publish.clovist.workers.dev");
+      }
     } catch (err) {
       lines.push(`Token verify: FAILED — ${err.message}`);
+      lines.push("Next: ask John to rotate/reissue CLOUDFLARE_API_TOKEN (KV Edit scope).");
     }
   }
 
@@ -402,6 +428,7 @@ async function cmdDoctor(cfg) {
   lines.push("  --to = explicit email allowlist.");
   lines.push("  Does NOT check Workspace / Entra / GitHub Org membership.");
   lines.push("  Panel URLs are NOT credentials — SSO session required.");
+  lines.push("  Wildcard *.securepublish.work: docs/DEPLOY-WILDCARD.md (NS may still be pending).");
 
   console.log(lines.join("\n"));
   return cfg.mock || missing.length === 0 ? 0 : 1;

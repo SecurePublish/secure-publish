@@ -4,6 +4,9 @@ CLI + skill to publish AI HTML dashboards behind company sign-in.
 
 ```text
 https://{host}/{panel-id}
+
+# interim host:  secure-publish.clovist.workers.dev
+# future host:   {slug}.securepublish.work
 ```
 
 - The **URL identifies** the dashboard (KV id). It is **not** a credential.
@@ -124,13 +127,26 @@ E2E gravado: rode `npm run e2e:mock` e veja `E2E-MOCK.txt`.
 ### 1. Conta e token
 
 1. [dash.cloudflare.com](https://dash.cloudflare.com) → anote o **Account ID**.
-2. API token (**Account**): Workers KV Storage — Edit; Workers Scripts — Edit (deploy).
+2. API token (**Account**): Workers KV Storage — Edit; Workers Scripts — Edit (deploy).  
+   **Ask John/ops for the token** — never invent or commit secrets. Without it, use `SECURE_PUBLISH_MOCK=1` / `npm run e2e:mock`.
 
 ```bash
-export CLOUDFLARE_API_TOKEN="…"
+export CLOUDFLARE_API_TOKEN="…"   # from John — not in git
 export CLOUDFLARE_ACCOUNT_ID="…"
-export SECURE_PUBLISH_COMPANY_DOMAINS="empresa.com"
+export SECURE_PUBLISH_KV_NAMESPACE_ID="46d61ee3d1f7410fa081e383b776934a"
+export SECURE_PUBLISH_COMPANY_DOMAINS="wises.com.br"
+# Interim (DNS pending):
+export SECURE_PUBLISH_BASE_URL="https://secure-publish.clovist.workers.dev"
+# Future (after wildcard — see docs/DEPLOY-WILDCARD.md):
+# export SECURE_PUBLISH_BASE_URL="https://{slug}.securepublish.work"
 ```
+
+| Phase | Base URL | Panel URL |
+|-------|----------|-----------|
+| **Interim** (now) | `https://secure-publish.clovist.workers.dev` | `…workers.dev/{panel-id}` |
+| **Future** | `https://{slug}.securepublish.work` | `https://{slug}.securepublish.work/{panel-id}` |
+
+Live Worker: [secure-publish.clovist.workers.dev](https://secure-publish.clovist.workers.dev). Google OAuth works. Wildcard DNS/NS may still be pending — attach routes when active ([docs/DEPLOY-WILDCARD.md](docs/DEPLOY-WILDCARD.md)).
 
 ### 2. Instalar
 
@@ -212,6 +228,8 @@ packages/edge    Worker (SSO + domain/--to ACL)
 skills/secure-publish/SKILL.md
 examples/        panel-vendas.html, panel-ops.html
 docs/security-mock-checklist.md
+docs/API-CONTRACT.md
+docs/DEPLOY-WILDCARD.md   # *.securepublish.work after NS active
 ```
 
 ## Ban list

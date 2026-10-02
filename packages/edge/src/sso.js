@@ -454,15 +454,25 @@ async function fetchUserEmail(provider, cfg, accessToken) {
  */
 function safeReturnTo(path, env) {
   if (!path || typeof path !== "string") return "/";
-  if (path.startsWith("/") && !path.startsWith("//")) return path;
+  const allowed = consoleOrigins(env);
+  // Relative paths belong to the console (Pages), not panel ids on the Worker.
+  if (path.startsWith("/") && !path.startsWith("//")) {
+    if (allowed.length) {
+      try {
+        return new URL(path, allowed[0] + "/").toString();
+      } catch {
+        /* fall through */
+      }
+    }
+    return path;
+  }
   try {
     const u = new URL(path);
-    const allowed = consoleOrigins(env);
     if (allowed.includes(u.origin)) return u.toString();
   } catch {
     /* ignore */
   }
-  return "/";
+  return allowed.length ? allowed[0] + "/" : "/";
 }
 
 function encodeState(obj) {
