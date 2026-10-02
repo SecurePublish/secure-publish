@@ -1,0 +1,23 @@
+{
+  "name": "secure-publish-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Publish AI HTML dashboards behind company SSO (domain allowlist V1)",
+  "workspaces": [
+    "packages/cli",
+    "packages/edge"
+  ],
+  "scripts": {
+    "deploy": "npm run deploy -w @secure-publish/edge",
+    "dev:edge": "npm run dev -w @secure-publish/edge",
+    "secure-publish": "node packages/cli/bin/secure-publish.js",
+    "sp": "node packages/cli/bin/secure-publish.js",
+    "doctor": "node packages/cli/bin/secure-publish.js doctor",
+    "list": "node packages/cli/bin/secure-publish.js list",
+    "e2e:mock": "node scripts/e2e-mock.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

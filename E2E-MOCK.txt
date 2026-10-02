@@ -1,0 +1,39 @@
+=== Secure Publish E2E mock ===
+when: 2026-10-02T03:49:50.237Z
+V1 Lock A: default = company email domain after SSO; --to = email allowlist.
+NOT Workspace/Entra/GitHub Org membership.
+
+--- publish company (no --to) ---
+Publishing panel-vendas.html → mock KV key 925fcc3a2d90a416f8c281af…
+Publicado pra **toda a empresa**: http://127.0.0.1:18791/925fcc3a2d90a416f8c281af
+key:    925fcc3a2d90a416f8c281af
+title:  Painel Vendas Q3
+access: company (email domain: empresa.com)
+note:   URL identifies the panel; viewer needs SSO, then domain/allowlist ACL. Not org membership (V1).
+
+--- publish --to ---
+Publishing panel-ops.html → mock KV key ea5fe8497972474feccd3f34…
+Publicado só para ana@empresa.com, bia@empresa.com: http://127.0.0.1:18791/ea5fe8497972474feccd3f34
+key:    ea5fe8497972474feccd3f34
+title:  Ops
+access: allowlist (ana@empresa.com, bia@empresa.com)
+note:   URL identifies the panel; viewer needs SSO, then domain/allowlist ACL. Not org membership (V1).
+
+--- mock-serve ---
+secure-publish mock-serve on http://127.0.0.1:18791 (domains: empresa.com)
+
+--- ACL cases ---
+PASS  company no session  got 403 expected 403
+      body: Unauthorized — SSO required. Mock: send X-Mock-User: you@empresa.com (simulates signed-in session). 
+PASS  company same domain  got 200 expected 200
+PASS  company other domain  got 403 expected 403  acl=domain_not_allowed
+      body: Seu e-mail não é do domínio desta empresa. Peça acesso ou use a conta corporativa. 
+PASS  allowlist listed  got 200 expected 200
+PASS  allowlist same domain but not listed  got 403 expected 403  acl=not_on_allowlist
+      body: Você está logado, mas não tem permissão neste dashboard. 
+PASS  allowlist other domain  got 403 expected 403  acl=not_on_allowlist
+      body: Você está logado, mas não tem permissão neste dashboard. 
+PASS  unknown id  got 404 expected 404
+      body: Not found — invalid or unknown panel id. 
+
+RESULT: ALL PASS

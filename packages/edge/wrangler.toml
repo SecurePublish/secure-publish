@@ -1,0 +1,25 @@
+name = "secure-publish"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+# Create the namespace once:
+#   npx wrangler kv namespace create PANELS
+# then paste the id below.
+[[kv_namespaces]]
+binding = "PANELS"
+id = "46d61ee3d1f7410fa081e383b776934a"
+
+# ─── SSO (prefer Cloudflare Access) ───
+# [vars]
+# TEAM_DOMAIN = "https://YOUR_TEAM.cloudflareaccess.com"
+# POLICY_AUD = "YOUR_AUD_TAG"
+#
+# V1 company-wide ACL = email domain allowlist (NOT org membership):
+# OAUTH_ALLOWED_DOMAINS = "empresa.com"
+#
+# Worker OAuth secrets via `wrangler secret put`:
+#   SESSION_SECRET, GOOGLE_*, GITHUB_*, MICROSOFT_*
+#
+# Local only (NEVER production):
+#   SSO_DEV_BYPASS = "1"

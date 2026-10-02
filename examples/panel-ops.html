@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ops — SLA Tickets</title>
+  <style>
+    :root {
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      color: #ecfccb;
+      background: #14532d;
+    }
+    body { margin: 0; padding: 2rem; max-width: 720px; }
+    h1 { margin: 0 0 0.25rem; font-size: 1.5rem; }
+    .sub { opacity: 0.75; margin-bottom: 1.5rem; }
+    .row { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+    .pill {
+      background: #166534;
+      border: 1px solid #4ade80;
+      border-radius: 999px;
+      padding: 0.75rem 1.25rem;
+      min-width: 7rem;
+    }
+    .pill span { display: block; font-size: 0.8rem; opacity: 0.85; }
+    .pill strong { display: block; font-size: 1.4rem; margin-top: 0.15rem; }
+    ul {
+      background: #166534;
+      border-radius: 12px;
+      padding: 1rem 1.25rem 1rem 2rem;
+      margin: 0;
+      line-height: 1.7;
+    }
+    .badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      background: #052e16;
+      border: 1px solid #4ade80;
+      vertical-align: middle;
+      margin-left: 0.35rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Ops · SLA de Tickets</h1>
+  <p class="sub">Segundo painel demo · outra URL, outro lock</p>
+  <div class="row">
+    <div class="pill"><span>Abertos</span><strong>23</strong></div>
+    <div class="pill"><span>Dentro do SLA</span><strong>91%</strong></div>
+    <div class="pill"><span>P1</span><strong>2</strong></div>
+  </div>
+  <ul>
+    <li>Integração Protheus — em análise <span class="badge">P2</span></li>
+    <li>VPN filiais — mitigado <span class="badge">ok</span></li>
+    <li>Backup nightly — ok <span class="badge">ok</span></li>
+  </ul>
+</body>
+</html>

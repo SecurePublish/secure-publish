@@ -1,0 +1,13 @@
+node_modules/
+.wrangler/
+dist/
+.env
+.env.*
+!.env.example
+.secure-publish/registry.json
+.secure-publish/mock-kv/
+.secure-publish/mock-meta/
+*.log
+.DS_Store
+cloudflared
+.session_secret

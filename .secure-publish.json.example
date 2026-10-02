@@ -1,0 +1,7 @@
+{
+  "accountId": "YOUR_CLOUDFLARE_ACCOUNT_ID",
+  "kvNamespaceId": "YOUR_KV_NAMESPACE_ID",
+  "baseUrl": "https://secure-publish.YOUR_SUBDOMAIN.workers.dev",
+  "workerName": "secure-publish",
+  "companyDomains": ["empresa.com"]
+}

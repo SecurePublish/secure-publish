@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Painel Vendas — Q3</title>
+  <style>
+    :root {
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      color: #0f172a;
+      background: #f8fafc;
+    }
+    body { margin: 0; padding: 2rem; max-width: 960px; }
+    h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+    .sub { color: #64748b; margin-bottom: 1.5rem; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+    @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+    }
+    .kpi { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; }
+    .label { font-size: 0.85rem; color: #64748b; }
+    .up { color: #059669; font-size: 0.8rem; margin-top: 0.35rem; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1.5rem;
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #e2e8f0;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid #f1f5f9;
+      font-size: 0.95rem;
+    }
+    th { background: #f1f5f9; color: #475569; font-weight: 600; }
+    tr:last-child td { border-bottom: none; }
+  </style>
+</head>
+<body>
+  <h1>Painel de Vendas — Q3</h1>
+  <p class="sub">Demo gerado por IA · protegido pelo Panel Gate</p>
+  <div class="grid">
+    <div class="card">
+      <div class="label">Receita</div>
+      <div class="kpi">R$ 1,24M</div>
+      <div class="up">↑ 12% vs Q2</div>
+    </div>
+    <div class="card">
+      <div class="label">Ticket médio</div>
+      <div class="kpi">R$ 4.180</div>
+      <div class="up">↑ 3%</div>
+    </div>
+    <div class="card">
+      <div class="label">Conversão</div>
+      <div class="kpi">18,4%</div>
+      <div class="up">↑ 1,1 pp</div>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Região</th><th>Deals</th><th>Won</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Sul</td><td>42</td><td>19</td></tr>
+      <tr><td>Sudeste</td><td>67</td><td>31</td></tr>
+      <tr><td>Nordeste</td><td>28</td><td>11</td></tr>
+    </tbody>
+  </table>
+</body>
+</html>
