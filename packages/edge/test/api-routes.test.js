@@ -249,8 +249,8 @@ describe("GET|POST /auth/logout", () => {
     assert.equal(res.headers.get("location"), "https://app.securepublish.work/signup/");
   });
 
-  it("allowlisted ?next= wins; evil origin falls back to signup", async () => {
-    const ok = await worker.fetch(
+  it("always uses canonical signup, ignoring caller-supplied redirects", async () => {
+    const res = await worker.fetch(
       new Request(
         "https://demo.securepublish.work/auth/logout?next=" +
           encodeURIComponent("https://app.securepublish.work/app/home.html"),
@@ -258,17 +258,41 @@ describe("GET|POST /auth/logout", () => {
       ),
       baseEnv
     );
-    assert.equal(ok.headers.get("location"), "https://app.securepublish.work/app/home.html");
+    assert.equal(res.headers.get("location"), "https://app.securepublish.work/signup/");
+  });
 
-    const evil = await worker.fetch(
-      new Request(
-        "https://demo.securepublish.work/auth/logout?next=" +
-          encodeURIComponent("https://evil.example/phish"),
-        { redirect: "manual" }
-      ),
-      baseEnv
+  it("redirect=0 and JSON Accept retain the plain 200 response", async () => {
+    for (const request of [
+      new Request("https://demo.securepublish.work/_auth/logout?redirect=0"),
+      new Request("https://demo.securepublish.work/auth/logout", {
+        headers: { Accept: "application/json" },
+      }),
+    ]) {
+      const res = await worker.fetch(request, baseEnv);
+      assert.equal(res.status, 200);
+      assert.equal(await res.text(), "Sessão encerrada.\n");
+      assert.match(res.headers.get("set-cookie") || "", /Max-Age=0/);
+    }
+  });
+
+  it("clear-cookie attrs match mint (Path/SameSite/Secure/Domain)", async () => {
+    const { mintSessionCookie, clearSessionCookie } = await import("../src/sso.js");
+    const url = "https://demo.securepublish.work/";
+    const minted = await mintSessionCookie(
+      { email: "a@wises.com.br", provider: "google", exp: 9999999999 },
+      baseEnv.SESSION_SECRET,
+      baseEnv,
+      url
     );
-    assert.equal(evil.headers.get("location"), "https://app.securepublish.work/signup/");
+    const cleared = clearSessionCookie(baseEnv, url);
+    const attrs = (s) =>
+      s
+        .split(";")
+        .slice(1)
+        .map((p) => p.trim().toLowerCase())
+        .filter((p) => p && !p.startsWith("max-age="))
+        .sort();
+    assert.deepEqual(attrs(cleared), attrs(minted));
   });
 
   it("workers.dev uses SameSite=None without Domain", async () => {
