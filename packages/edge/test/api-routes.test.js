@@ -228,13 +228,22 @@ describe("GET|POST /auth/logout", () => {
     );
     assert.equal(res.status, 302);
     assert.equal(res.headers.get("location"), "https://app.securepublish.work/signup/");
-    const setCookie = res.headers.get("set-cookie") || "";
-    assert.match(setCookie, /secure_publish_session=/);
-    assert.match(setCookie, /Max-Age=0/);
-    assert.match(setCookie, /Domain=\.securepublish\.work/);
-    assert.match(setCookie, /SameSite=Lax/);
-    assert.match(setCookie, /Secure/);
-    assert.match(setCookie, /HttpOnly/);
+    const cookies = typeof res.headers.getSetCookie === "function"
+      ? res.headers.getSetCookie()
+      : [res.headers.get("set-cookie") || ""];
+    assert.ok(cookies.length >= 2, `expected ≥2 Set-Cookie clears, got ${cookies.length}`);
+    const joined = cookies.join("\n");
+    assert.match(joined, /secure_publish_session=/);
+    assert.match(joined, /Max-Age=0/);
+    assert.match(joined, /Domain=\.securepublish\.work/);
+    assert.match(joined, /SameSite=Lax/);
+    assert.match(joined, /Secure/);
+    assert.match(joined, /HttpOnly/);
+    // Host-only clear (no Domain) must be present to kill pre-Domain zombies
+    assert.ok(
+      cookies.some((c) => /Max-Age=0/i.test(c) && !/Domain=/i.test(c) && /SameSite=Lax/i.test(c)),
+      "missing host-only SameSite=Lax clear"
+    );
   });
 
   it("POST is idempotent without prior session", async () => {
@@ -303,8 +312,11 @@ describe("GET|POST /auth/logout", () => {
       baseEnv
     );
     assert.equal(res.status, 302);
-    const setCookie = res.headers.get("set-cookie") || "";
-    assert.match(setCookie, /SameSite=None/);
-    assert.equal(/Domain=/i.test(setCookie), false);
+    const cookies = typeof res.headers.getSetCookie === "function"
+      ? res.headers.getSetCookie()
+      : [res.headers.get("set-cookie") || ""];
+    const joined = cookies.join("\n");
+    assert.match(joined, /SameSite=None/);
+    assert.equal(cookies.some((c) => /Domain=/i.test(c)), false);
   });
 });

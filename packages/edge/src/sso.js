@@ -510,9 +510,14 @@ function logoutRedirectTarget(env) {
 function logoutResponse(request, env) {
   const url = new URL(request.url);
   const headers = new Headers({
-    "set-cookie": clearSessionCookie(env, request.url),
     "cache-control": "no-store",
   });
+  // Append (not set): browsers keep host-only cookies separate from Domain=
+  // cookies. Clearing only Domain=.securepublish.work leaves a pre-Domain
+  // host-only secure_publish_session on app.securepublish.work as a zombie.
+  for (const cookie of clearSessionCookieVariants(env, request.url)) {
+    headers.append("set-cookie", cookie);
+  }
 
   // Preserve the text response for API callers and explicit non-redirect use;
   // browser navigation defaults to the canonical signup redirect.
@@ -591,6 +596,30 @@ function clearSessionCookie(env = {}, requestUrl = "") {
   return `${COOKIE_NAME}=; Path=/${domain}; HttpOnly; Secure; SameSite=${sameSite}; Max-Age=0`;
 }
 
+/**
+ * All Set-Cookie clears needed to kill current + legacy session cookies.
+ * Domain-scoped clear alone does NOT delete a host-only cookie of the same name.
+ * @returns {string[]}
+ */
+function clearSessionCookieVariants(env = {}, requestUrl = "") {
+  const { sameSite, domain } = cookieAttrs(env, requestUrl);
+  const out = [];
+  const add = (line) => {
+    if (!out.includes(line)) out.push(line);
+  };
+  // 1) Match current mint attrs (Domain + SameSite when on *.securepublish.work)
+  add(`${COOKIE_NAME}=; Path=/${domain}; HttpOnly; Secure; SameSite=${sameSite}; Max-Age=0`);
+  // 2) Host-only Lax — kills cookies minted before Domain=.securepublish.work
+  add(`${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
+  // 3) Legacy SameSite=None host-only (workers.dev / early custom mint)
+  add(`${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0`);
+  // 4) Legacy SameSite=None with Domain (if Domain ever paired with None)
+  if (domain) {
+    add(`${COOKIE_NAME}=; Path=/${domain}; HttpOnly; Secure; SameSite=None; Max-Age=0`);
+  }
+  return out;
+}
+
 async function readSessionCookie(request, secret) {
   const raw = request.headers.get("cookie") || "";
   const match = raw.match(new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]+)`));
@@ -629,4 +658,4 @@ function timingSafeEqual(a, b) {
 }
 
 /** Test/helper export */
-export { readSessionCookie, mintSessionCookie, clearSessionCookie, COOKIE_NAME };
+export { readSessionCookie, mintSessionCookie, clearSessionCookie, clearSessionCookieVariants, COOKIE_NAME };
