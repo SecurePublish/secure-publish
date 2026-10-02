@@ -25,11 +25,8 @@ async function resolvePanel(key, panels) {
   return { ok: true, record: decodeRecord(raw) };
 }
 
-/**
- * Host-header gate for custom domains (Marcus #5).
- * Subdomain / workers.dev always OK. Custom host only if tenant.customVerified.
- */
-async function assertHostAllowed(request, env) {
+/** Normalize Host header (or URL hostname). */
+function requestHost(request) {
   let host = (request.headers.get("Host") || "").split(":")[0].toLowerCase();
   if (!host) {
     try {
@@ -38,6 +35,15 @@ async function assertHostAllowed(request, env) {
       host = "";
     }
   }
+  return host;
+}
+
+/**
+ * Host-header gate for custom domains (Marcus #5).
+ * Subdomain / workers.dev always OK. Custom host only if tenant.customVerified.
+ */
+async function assertHostAllowed(request, env) {
+  const host = requestHost(request);
   if (!host) return { ok: true };
   if (host.endsWith(".workers.dev") || host.endsWith(".securepublish.work")) {
     return { ok: true };
@@ -66,6 +72,46 @@ const PAGES_ORIGIN = {
   "www.securepublish.work": "https://secure-publish-landing.pages.dev",
   "securepublish.work": "https://secure-publish-landing.pages.dev",
 };
+
+const RESERVED_PRODUCT_HOSTS = new Set(Object.keys(PAGES_ORIGIN));
+const BASE_SUFFIX = ".securepublish.work";
+
+/**
+ * Fail-closed host ↔ publisher binding (Marcus / host swap).
+ * After panel resolve, before SSO: old slug without lock must 404 (no OAuth redirect).
+ * - *.securepublish.work (not reserved): require host:sub:{slug} + publisherEmail match
+ * - custom host: require host:custom:{host} owner === publisherEmail
+ * - *.workers.dev / localhost: serve by panel id (interim)
+ */
+export async function assertPanelHostBinding(request, env, panelRecord) {
+  const host = requestHost(request);
+  if (!host) return { ok: true };
+  if (host.endsWith(".workers.dev") || host === "localhost" || host === "127.0.0.1") {
+    return { ok: true };
+  }
+
+  const publisher = (panelRecord?.publisherEmail || "").trim().toLowerCase();
+  const deny = {
+    ok: false,
+    status: 404,
+    body: "Not found — host not bound.\n",
+  };
+
+  if (host.endsWith(BASE_SUFFIX) || host === "securepublish.work") {
+    if (RESERVED_PRODUCT_HOSTS.has(host)) return { ok: true };
+    const slug = host.slice(0, -BASE_SUFFIX.length);
+    if (!slug || slug.includes(".")) return deny;
+    const lock = await env.PANELS.get(`host:sub:${slug}`);
+    if (!lock) return deny;
+    if (!publisher || lock.trim().toLowerCase() !== publisher) return deny;
+    return { ok: true };
+  }
+
+  const lock = await env.PANELS.get(`host:custom:${host}`);
+  if (!lock) return deny;
+  if (!publisher || lock.trim().toLowerCase() !== publisher) return deny;
+  return { ok: true };
+}
 
 async function proxyReservedHost(request, url) {
   const origin = PAGES_ORIGIN[url.hostname.toLowerCase()];
@@ -145,6 +191,14 @@ export default {
     if (!panel.ok) {
       return new Response("Not found — invalid or unknown panel id.", {
         status: 404,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+
+    const bind = await assertPanelHostBinding(request, env, panel.record);
+    if (!bind.ok) {
+      return new Response(bind.body || "Not found — host not bound.\n", {
+        status: bind.status || 404,
         headers: { "content-type": "text/plain; charset=utf-8" },
       });
     }
