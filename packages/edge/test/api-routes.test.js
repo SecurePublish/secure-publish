@@ -254,6 +254,78 @@ describe("API routes — Marcus checklist", () => {
     assert.equal(res.status, 403);
   });
 
+
+  it("POST /api/hosting/custom/verify without claim → 400 no_custom_hostname", async () => {
+    const fresh = {
+      PANELS: memoryKv(),
+      SSO_DEV_BYPASS: "1",
+      CONSOLE_ORIGIN: "https://console.pages.dev",
+      OAUTH_ALLOWED_DOMAINS: "localhost",
+    };
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/hosting/custom/verify", {
+        method: "POST",
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      fresh
+    );
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.error, "no_custom_hostname");
+  });
+
+  it("POST /api/hosting/custom/verify txt_not_found → 422, stays unverified", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/hosting/custom/verify", {
+        method: "POST",
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      {
+        ...env,
+        __lookupTxt: async () => ({ ok: true, records: [] }),
+      }
+    );
+    assert.equal(res.status, 422);
+    const body = await res.json();
+    assert.equal(body.error, "txt_not_found");
+    assert.equal(body.verify?.name, "_secure-publish.dash.acme.example");
+    assert.equal(body.verify?.value, "sp-verify=dev@localhost");
+  });
+
+  it("POST /api/hosting/custom/verify txt_mismatch → 422", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/hosting/custom/verify", {
+        method: "POST",
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      {
+        ...env,
+        __lookupTxt: async () => ({
+          ok: true,
+          records: ["sp-verify=other@evil.example"],
+        }),
+      }
+    );
+    assert.equal(res.status, 422);
+    const body = await res.json();
+    assert.equal(body.error, "txt_mismatch");
+  });
+
+  it("POST /api/hosting/custom/verify without SSO → 401", async () => {
+    const locked = {
+      PANELS: env.PANELS,
+      CONSOLE_ORIGIN: env.CONSOLE_ORIGIN,
+    };
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/hosting/custom/verify", {
+        method: "POST",
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      locked
+    );
+    assert.equal(res.status, 401);
+  });
+
   it("(5) unverified custom Host cannot serve panels", async () => {
     const res = await worker.fetch(
       new Request(`https://dash.acme.example/${PANEL_ID}`, {
@@ -263,6 +335,46 @@ describe("API routes — Marcus checklist", () => {
     );
     assert.equal(res.status, 403);
   });
+
+  it("POST /api/hosting/custom/verify success → customVerified + host switch + serve OK", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/hosting/custom/verify", {
+        method: "POST",
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      {
+        ...env,
+        __lookupTxt: async (name) => {
+          assert.equal(name, "_secure-publish.dash.acme.example");
+          return { ok: true, records: ["sp-verify=dev@localhost"] };
+        },
+      }
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.customVerified, true);
+    assert.equal(body.customHostname, "dash.acme.example");
+    assert.equal(body.host, "dash.acme.example");
+
+    const me = await worker.fetch(
+      new Request("https://worker.test/api/me", {
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      env
+    );
+    const meBody = await me.json();
+    assert.equal(meBody.host, "dash.acme.example");
+
+    const serve = await worker.fetch(
+      new Request(`https://dash.acme.example/${PANEL_ID}`, {
+        headers: { Host: "dash.acme.example" },
+      }),
+      env
+    );
+    assert.equal(serve.status, 200);
+  });
+
 });
 
 describe("GET|POST /auth/logout", () => {

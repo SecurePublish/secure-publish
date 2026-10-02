@@ -20,6 +20,7 @@ import {
   getTenant,
   claimSubdomain,
   claimCustomHostname,
+  verifyCustomHostname,
   accessToApiMode,
   accessToAllowlist,
   formatPublishedLabel,
@@ -43,7 +44,7 @@ export function corsHeaders(request, env) {
   const allowed = consoleOrigins(env);
   const headers = {
     Vary: "Origin",
-    "Access-Control-Allow-Methods": "GET, PATCH, PUT, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Accept",
     "Access-Control-Allow-Credentials": "true",
     "Access-Control-Max-Age": "86400",
@@ -119,6 +120,10 @@ export async function handleApiRoutes(request, env) {
 
   if (url.pathname === "/api/hosting/custom" && request.method === "PUT") {
     return handleCustom(request, env, { email, domain });
+  }
+
+  if (url.pathname === "/api/hosting/custom/verify" && request.method === "POST") {
+    return handleCustomVerify(request, env, { email, domain });
   }
 
   return err("not_found", 404, request, env);
@@ -324,5 +329,36 @@ async function handleCustom(request, env, { email }) {
     env
   );
 }
+
+async function handleCustomVerify(request, env, { email }) {
+  // Body optional/ignored — uses claimed tenant.customHostname + session email.
+  const result = await verifyCustomHostname(env.PANELS, email, {
+    lookupTxt: env.__lookupTxt,
+  });
+  if (!result.ok) {
+    return json(
+      {
+        error: result.error || "error",
+        verify: result.verify,
+      },
+      result.status || 400,
+      request,
+      env
+    );
+  }
+  return json(
+    {
+      ok: true,
+      host: result.host,
+      customHostname: result.customHostname,
+      customVerified: true,
+      verify: result.verify,
+    },
+    200,
+    request,
+    env
+  );
+}
+
 
 export { ssoMode };

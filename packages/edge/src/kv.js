@@ -21,6 +21,7 @@
  */
 
 import { normalizeEmails, normalizeDomains } from "./acl.js";
+import { lookupTxt, txtMatchesVerify } from "./dns.js";
 
 export const PANEL_ID_RE = /^[0-9a-f]{24}$/i;
 
@@ -244,7 +245,7 @@ export async function claimCustomHostname(kv, hostname, email) {
       type: "txt",
       name: `_secure-publish.${h}`,
       value: `sp-verify=${owner}`,
-      note: "Ownership verification pending (John/DNS). Host not switched until verified.",
+      note: "Add this TXT, then POST /api/hosting/custom/verify. Host not switched until verified.",
     },
     tenant,
   };
@@ -328,3 +329,72 @@ export function buildAccessFromPatch(body, publisherEmail) {
 }
 
 export { normalizeEmails, normalizeDomains };
+
+/**
+ * Prove ownership of claimed customHostname via TXT at
+ * `_secure-publish.<host>` = `sp-verify=<owner-email>`.
+ * On success sets customVerified=true and host=customHostname.
+ *
+ * @param {KVNamespace} kv
+ * @param {string} email session owner
+ * @param {{ lookupTxt?: Function, txtMatchesVerify?: Function }} [opts] test inject
+ */
+export async function verifyCustomHostname(kv, email, opts = {}) {
+  const owner = String(email || "").trim().toLowerCase();
+  if (!owner || !owner.includes("@")) {
+    return { ok: false, status: 400, error: "missing_email" };
+  }
+  const tenant = await getTenant(kv, owner);
+  if (!tenant?.customHostname) {
+    return { ok: false, status: 400, error: "no_custom_hostname" };
+  }
+  const h = String(tenant.customHostname)
+    .trim()
+    .toLowerCase()
+    .replace(/\.$/, "");
+  const lock = await kv.get(`host:custom:${h}`);
+  if (lock && lock !== owner) {
+    return { ok: false, status: 403, error: "hostname_taken" };
+  }
+
+  const verifyName = `_secure-publish.${h}`;
+  const expected = `sp-verify=${owner}`;
+  const verify = { type: "txt", name: verifyName, value: expected };
+
+  const doLookup = opts.lookupTxt || lookupTxt;
+  const matches = opts.txtMatchesVerify || txtMatchesVerify;
+
+  let dnsResult;
+  try {
+    dnsResult = await doLookup(verifyName);
+  } catch {
+    return { ok: false, status: 502, error: "dns_lookup_failed", verify };
+  }
+  if (!dnsResult?.ok) {
+    return { ok: false, status: 502, error: "dns_lookup_failed", verify };
+  }
+  const records = Array.isArray(dnsResult.records) ? dnsResult.records : [];
+  if (!records.length) {
+    return { ok: false, status: 422, error: "txt_not_found", verify };
+  }
+  if (!matches(records, expected)) {
+    return { ok: false, status: 422, error: "txt_mismatch", verify };
+  }
+
+  const updated = await putTenant(kv, {
+    ...tenant,
+    email: owner,
+    customHostname: h,
+    customVerified: true,
+    // Switch serving host only after verified (resolveHost also gates on customVerified).
+    host: h,
+  });
+  return {
+    ok: true,
+    host: h,
+    customHostname: h,
+    customVerified: true,
+    verify,
+    tenant: updated,
+  };
+}

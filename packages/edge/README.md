@@ -14,6 +14,7 @@ Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)
 | PATCH | `/api/panels/:id/access` | `{ mode, allowlist[], sendInvite? }` — **publisher only** |
 | PUT | `/api/hosting/subdomain` | `{ slug }` → `{ host }` |
 | PUT | `/api/hosting/custom` | `{ hostname }` → claim; **not served until verified** |
+| POST | `/api/hosting/custom/verify` | DoH TXT `_secure-publish.<host>` = `sp-verify=<email>` → `customVerified` + switch `host` |
 | GET | `/auth/{google\|microsoft\|github}` | OAuth start (`?next=` → return) |
 | GET\|POST | `/auth/logout` | Clear `secure_publish_session` with **same** Path/SameSite/Secure/Domain as login → 302 first `CONSOLE_ORIGIN` + `/signup/` (idempotent; ignores `?next=`; `cache-control: no-store`) |
 | GET | `/:panelId` | HTML after SSO + ACL (Lock A) |
@@ -71,6 +72,6 @@ npx wrangler deploy
 ## Gaps (John / ops)
 
 - OAuth client IDs/secrets + redirect URIs (`/_auth/callback/{provider}`).
-- DNS: `*.securepublish.work` → Worker; custom domain CNAME + TXT `_secure-publish.{host}` then mark `customVerified` (API verify endpoint TBD).
+- DNS: `*.securepublish.work` → Worker; custom domain: TXT `_secure-publish.{host}=sp-verify=<email>` then `POST /api/hosting/custom/verify`; CNAME de tráfego (`cname.securepublish.work`) TBD (John/CF).
 - Email provider for `sendInvite`.
 - Cloudflare Access (`TEAM_DOMAIN` + `POLICY_AUD`) if preferred over Worker OAuth.
