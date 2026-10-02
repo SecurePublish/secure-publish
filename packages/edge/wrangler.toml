@@ -11,22 +11,17 @@ binding = "PANELS"
 id = "46d61ee3d1f7410fa081e383b776934a"
 preview_id = "46d61ee3d1f7410fa081e383b776934a"
 
-# ─── Custom domains / routes (enable AFTER DNS NS for securepublish.work is active) ───
-# Prefer: Cloudflare Dashboard → Workers → secure-publish → Domains & Routes
-#   → Add Custom Domain: *.securepublish.work  (and optionally apex)
-# Or uncomment routes below and: npx wrangler deploy
+# ─── Custom domains / routes — wildcard LIVE (2026-10-02) ───
+# Dashboard attached: *.securepublish.work/* → this Worker
+# Apex/www stay on Pages. Fallback: workers_dev = true
 # See docs/DEPLOY-WILDCARD.md
 #
-# [[routes]]
-# pattern = "*.securepublish.work/*"
-# zone_name = "securepublish.work"
-#
-# [[routes]]
-# pattern = "securepublish.work/*"
-# zone_name = "securepublish.work"
+[[routes]]
+pattern = "*.securepublish.work/*"
+zone_name = "securepublish.work"
 
 # ─── Console CORS (exact Pages origin(s), comma-separated) ───
-# Interim: Pages + local pairing. After DNS: add https://app.securepublish.work
+# app.securepublish.work + Pages + local pairing
 [vars]
 OAUTH_ALLOWED_DOMAINS = "wises.com.br"
 CONSOLE_ORIGIN = "https://app.securepublish.work,https://secure-publish-app.pages.dev,http://127.0.0.1:8765"

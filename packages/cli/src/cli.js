@@ -401,9 +401,10 @@ async function cmdDoctor(cfg) {
     lines.push("  Without a token yet: SECURE_PUBLISH_MOCK=1 for local E2E.");
     if (!cfg.baseUrl) {
       lines.push("");
-      lines.push("  Interim BASE_URL (DNS wildcard pending):");
-      lines.push("    export SECURE_PUBLISH_BASE_URL=https://secure-publish.clovist.workers.dev");
-      lines.push("  Future: https://{slug}.securepublish.work  — docs/DEPLOY-WILDCARD.md");
+      lines.push("  Wildcard LIVE — set BASE_URL:");
+      lines.push("    export SECURE_PUBLISH_BASE_URL=https://demo.securepublish.work");
+      lines.push("  Or tenant: https://{slug}.securepublish.work  — docs/DEPLOY-WILDCARD.md");
+      lines.push("  Fallback: https://secure-publish.clovist.workers.dev");
     }
   } else {
     lines.push("");
@@ -414,7 +415,7 @@ async function cmdDoctor(cfg) {
       lines.push("");
       lines.push("Next: secure-publish publish examples/panel-vendas.html --title \"…\"");
       if (!cfg.baseUrl) {
-        lines.push("  Tip: set SECURE_PUBLISH_BASE_URL=https://secure-publish.clovist.workers.dev");
+        lines.push("  Tip: set SECURE_PUBLISH_BASE_URL=https://demo.securepublish.work");
       }
     } catch (err) {
       lines.push(`Token verify: FAILED — ${err.message}`);
@@ -428,7 +429,7 @@ async function cmdDoctor(cfg) {
   lines.push("  --to = explicit email allowlist.");
   lines.push("  Does NOT check Workspace / Entra / GitHub Org membership.");
   lines.push("  Panel URLs are NOT credentials — SSO session required.");
-  lines.push("  Wildcard *.securepublish.work: docs/DEPLOY-WILDCARD.md (NS may still be pending).");
+  lines.push("  Wildcard *.securepublish.work: LIVE — docs/DEPLOY-WILDCARD.md");
 
   console.log(lines.join("\n"));
   return cfg.mock || missing.length === 0 ? 0 : 1;

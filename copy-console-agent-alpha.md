@@ -1,5 +1,7 @@
 # Secure Publish — copy alpha (console + agent)
 **Status:** strings fechadas pra Cameron colar  
+**V1 IdP:** só Google (MS/GitHub desligados na UI; strings abaixo = roadmap).
+
 **Regras:** agent-first · sem waitlist · **V1 Lock A:** viewer = mesmo domínio de e-mail após SSO (não membership Workspace/Entra/GitHub Org) · allowlist aperta depois · sem “gate”
 
 **Changelog:** trust.org / signup.note / erros / share.help alinhados ao edge de domínio (Marcus/John). Membership = fase seguinte.
@@ -40,7 +42,7 @@
 |-----|----|----|
 | share.title | Compartilhar | Share |
 | share.modeOrg | Toda a empresa | Whole company |
-| share.modeOrg.help | Quem tem o mesmo domínio de e-mail da empresa, após login (Google / Microsoft / GitHub). | Anyone with your company email domain, after sign-in (Google / Microsoft / GitHub). |
+| share.modeOrg.help | Quem tem o mesmo domínio de e-mail da empresa, após login (Google). | Anyone with your company email domain, after sign-in (Google). |
 | share.modeAllowlist | Só estas pessoas | Only these people |
 | share.modeAllowlist.help | Ainda exige login. Só estes e-mails (do domínio da empresa) abrem o link. | Still requires sign-in. Only these emails (on the company domain) can open the link. |
 | share.emails | E-mails | Emails |
@@ -72,10 +74,10 @@
 | Key | PT | EN |
 |-----|----|----|
 | signup.title | Criar conta e começar | Create account — start now |
-| signup.lede | Entre com Google, Microsoft ou GitHub. O login da empresa (mesmo domínio de e-mail) protege seus dashboards. | Sign in with Google, Microsoft, or GitHub. Company sign-in (same email domain) protects your dashboards. |
+| signup.lede | Entre com Google. O login da empresa (mesmo domínio de e-mail) protege seus dashboards. | Sign in with Google. Company sign-in (same email domain) protects your dashboards. |
 | signup.google | Continuar com Google | Continue with Google |
-| signup.microsoft | Continuar com Microsoft | Continue with Microsoft |
-| signup.github | Continuar com GitHub | Continue with GitHub |
+| signup.microsoft *(V1.1 — esconder)* | Continuar com Microsoft | Continue with Microsoft |
+| signup.github *(V1.1 — esconder)* | Continuar com GitHub | Continue with GitHub |
 | signup.note | V1: quem vê precisa do mesmo domínio de e-mail da conta (ex. @wises.com.br). Membership de org (Workspace/Entra/GitHub Org) vem depois. | V1: viewers need the same email domain as the account (e.g. @acme.com). Full org membership (Workspace/Entra/GitHub Org) comes later. |
 | signup.preferAgent | Prefere pelo agente? Instale a skill e ela abre o cadastro pra você. | Prefer the agent? Install the skill — it opens signup for you. |
 
@@ -86,10 +88,10 @@
 | Key | PT | EN |
 |-----|----|----|
 | cta.primary | Criar conta e começar | Create account — start now |
-| cta.sub | Login com Google, Microsoft ou GitHub. Quem vê precisa do mesmo domínio de e-mail. | Sign in with Google, Microsoft, or GitHub. Viewers need the same email domain. |
+| cta.sub | Login com Google. Quem vê precisa do mesmo domínio de e-mail. | Sign in with Google. Viewers need the same email domain. |
 | path.happy | Instale a skill, entre com a conta da empresa e publique pelo agente. O console mostra URLs, quem abriu e quando. | Install the skill, sign in with your company account, and publish from the agent. The console shows URLs, who opened them, and when. |
 | trust.org | Só e-mails do domínio da empresa abrem o link (após SSO). | Only emails on your company domain can open the link (after SSO). |
-| trust.idp | Login com Google, Microsoft ou GitHub. Okta / SAML em seguida. | Sign in with Google, Microsoft, or GitHub. Okta / SAML coming next. |
+| trust.idp | Login com Google. Okta / SAML em seguida. | Sign in with Google. Okta / SAML coming next. |
 | trust.demo | A demo da landing simula o fluxo; o login de verdade roda no produto. | The landing demo simulates the flow; real sign-in runs in the product. |
 
 ---
@@ -110,7 +112,7 @@ Depois diga ao agente:
 
 | Situação | PT | EN |
 |----------|----|----|
-| sem conta | Você ainda não tem conta Secure Publish. Vou abrir o cadastro — entre com Google, Microsoft ou GitHub (e-mail da empresa). | You don’t have a Secure Publish account yet. I’ll open signup — use Google, Microsoft, or GitHub (company email). |
+| sem conta | Você ainda não tem conta Secure Publish. Vou abrir o cadastro — entre com Google (e-mail da empresa). | You don’t have a Secure Publish account yet. I’ll open signup — use Google (company email). |
 | aguardando link | Depois de criar a conta, volto aqui. Código de vínculo: {code} | After you create the account, I’ll continue here. Link code: {code} |
 | conta ok | Conta vinculada. | Account linked. |
 | sem hosting | Onde publicar? Posso reservar {slug}.securepublish.work ou você usa um domínio próprio. | Where should we host? I can reserve {slug}.securepublish.work or you can use a custom domain. |

@@ -1,7 +1,7 @@
 {
   "accountId": "YOUR_CLOUDFLARE_ACCOUNT_ID",
   "kvNamespaceId": "YOUR_KV_NAMESPACE_ID",
-  "baseUrl": "https://secure-publish.clovist.workers.dev",
+  "baseUrl": "https://demo.securepublish.work",
   "workerName": "secure-publish",
   "companyDomains": ["empresa.com"]
 }

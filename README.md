@@ -5,8 +5,8 @@ CLI + skill to publish AI HTML dashboards behind company sign-in.
 ```text
 https://{host}/{panel-id}
 
-# interim host:  secure-publish.clovist.workers.dev
-# future host:   {slug}.securepublish.work
+# default host:  {slug}.securepublish.work  (wildcard LIVE; demo interim)
+# fallback:      secure-publish.clovist.workers.dev
 ```
 
 - The **URL identifies** the dashboard (KV id). It is **not** a credential.
@@ -135,18 +135,18 @@ export CLOUDFLARE_API_TOKEN="…"   # from John — not in git
 export CLOUDFLARE_ACCOUNT_ID="…"
 export SECURE_PUBLISH_KV_NAMESPACE_ID="46d61ee3d1f7410fa081e383b776934a"
 export SECURE_PUBLISH_COMPANY_DOMAINS="wises.com.br"
-# Interim (DNS pending):
-export SECURE_PUBLISH_BASE_URL="https://secure-publish.clovist.workers.dev"
-# Future (after wildcard — see docs/DEPLOY-WILDCARD.md):
-# export SECURE_PUBLISH_BASE_URL="https://{slug}.securepublish.work"
+# Wildcard LIVE (default / demo interim tenant):
+export SECURE_PUBLISH_BASE_URL="https://demo.securepublish.work"
+# Or tenant slug: https://{slug}.securepublish.work
+# Fallback (same Worker): https://secure-publish.clovist.workers.dev
 ```
 
 | Phase | Base URL | Panel URL |
 |-------|----------|-----------|
-| **Interim** (now) | `https://secure-publish.clovist.workers.dev` | `…workers.dev/{panel-id}` |
-| **Future** | `https://{slug}.securepublish.work` | `https://{slug}.securepublish.work/{panel-id}` |
+| **Wildcard** (now) | `https://demo.securepublish.work` or `https://{slug}.securepublish.work` | `https://demo.securepublish.work/{panel-id}` |
+| **Fallback** | `https://secure-publish.clovist.workers.dev` | `…workers.dev/{panel-id}` |
 
-Live Worker: [secure-publish.clovist.workers.dev](https://secure-publish.clovist.workers.dev). Google OAuth works. Wildcard DNS/NS may still be pending — attach routes when active ([docs/DEPLOY-WILDCARD.md](docs/DEPLOY-WILDCARD.md)).
+Wildcard route `*.securepublish.work/*` → Worker **attached**. Fallback workers.dev still up. Google OAuth works. See [docs/DEPLOY-WILDCARD.md](docs/DEPLOY-WILDCARD.md) and `E2E-WILDCARD.txt`.
 
 ### 2. Instalar
 
@@ -229,7 +229,7 @@ skills/secure-publish/SKILL.md
 examples/        panel-vendas.html, panel-ops.html
 docs/security-mock-checklist.md
 docs/API-CONTRACT.md
-docs/DEPLOY-WILDCARD.md   # *.securepublish.work after NS active
+docs/DEPLOY-WILDCARD.md   # *.securepublish.work LIVE (demo default)
 ```
 
 ## Ban list
