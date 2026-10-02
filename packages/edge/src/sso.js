@@ -8,7 +8,8 @@
  *
  * Optional local-only: SSO_DEV_BYPASS=1 (never set in production).
  *
- * Console contract also uses GET /auth/{google|microsoft|github} (alias of /_auth/start/…).
+ * Console contract also uses GET /auth/{google|microsoft|github} (alias of /_auth/start/…)
+ * and GET|POST /auth/logout (clear cookie → console /signup/).
  */
 
 import { jwtVerify, createRemoteJWKSet } from "jose";
@@ -211,6 +212,17 @@ const PROVIDERS = {
 export async function handleAuthRoutes(request, env) {
   const url = new URL(request.url);
 
+  // Logout: idempotent, no prior auth required (GET + POST).
+  if (
+    (url.pathname === "/auth/logout" ||
+      url.pathname === "/auth/logout/" ||
+      url.pathname === "/_auth/logout" ||
+      url.pathname === "/_auth/logout/") &&
+    (request.method === "GET" || request.method === "POST" || request.method === "HEAD")
+  ) {
+    return logoutResponse(request, env);
+  }
+
   // Cameron contract: GET /auth/{google|microsoft|github}
   const contractStart = url.pathname.match(/^\/auth\/(google|github|microsoft)\/?$/);
   if (contractStart) {
@@ -243,16 +255,6 @@ export async function handleAuthRoutes(request, env) {
   const cb = url.pathname.match(/^\/_auth\/callback\/(google|github|microsoft)\/?$/);
   if (cb) {
     return oauthCallback(request, env, cb[1]);
-  }
-
-  if (url.pathname === "/_auth/logout" || url.pathname === "/_auth/logout/") {
-    return new Response("Sessão encerrada.\n", {
-      status: 200,
-      headers: {
-        "content-type": "text/plain; charset=utf-8",
-        "set-cookie": clearSessionCookie(env),
-      },
-    });
   }
 
   const start = url.pathname.match(/^\/_auth\/start\/(google|github|microsoft)\/?$/);
@@ -393,7 +395,8 @@ async function oauthCallback(request, env, provider) {
   const cookie = await mintSessionCookie(
     { email, provider, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SEC },
     env.SESSION_SECRET,
-    env
+    env,
+    request.url
   );
 
   const returnTo = safeReturnTo(state.returnTo, env);
@@ -475,6 +478,76 @@ function safeReturnTo(path, env) {
   return allowed.length ? allowed[0] + "/" : "/";
 }
 
+
+/**
+ * Canonical logout destination. Never honor a caller-supplied redirect: logout
+ * must end at signup on the first configured console origin.
+ * @param {Record<string, string | undefined>} env
+ */
+function logoutRedirectTarget(env) {
+  const origin = consoleOrigins(env)[0];
+  if (origin) {
+    try {
+      const target = new URL(origin);
+      if (target.protocol === "http:" || target.protocol === "https:") {
+        target.pathname = "/signup/";
+        target.search = "";
+        target.hash = "";
+        return target.toString();
+      }
+    } catch {
+      /* fall through to the canonical production console */
+    }
+  }
+  return "https://app.securepublish.work/signup/";
+}
+
+/**
+ * Clear session cookie (matching mint attrs) and redirect to console signup.
+ * @param {Request} request
+ * @param {Record<string, string | undefined>} env
+ */
+function logoutResponse(request, env) {
+  const url = new URL(request.url);
+  const headers = new Headers({
+    "set-cookie": clearSessionCookie(env, request.url),
+    "cache-control": "no-store",
+  });
+
+  // Preserve the text response for API callers and explicit non-redirect use;
+  // browser navigation defaults to the canonical signup redirect.
+  if (url.searchParams.get("redirect") === "0" || acceptPrefersJson(request)) {
+    headers.set("content-type", "text/plain; charset=utf-8");
+    return new Response("Sessão encerrada.\n", { status: 200, headers });
+  }
+
+  headers.set("location", logoutRedirectTarget(env));
+  return new Response(null, { status: 302, headers });
+}
+
+function acceptPrefersJson(request) {
+  const raw = request.headers.get("accept") || "";
+  let jsonQ = 0;
+  let htmlQ = 0;
+  let wildcardQ = 0;
+  for (const item of raw.toLowerCase().split(",")) {
+    const [media, ...params] = item.trim().split(";");
+    if (!media) continue;
+    let q = 1;
+    for (const param of params) {
+      const [key, value] = param.trim().split("=");
+      if (key === "q") {
+        const parsed = Number(value);
+        q = Number.isFinite(parsed) ? parsed : 0;
+      }
+    }
+    if (media === "application/json" || media.endsWith("+json")) jsonQ = Math.max(jsonQ, q);
+    else if (media === "text/html" || media === "application/xhtml+xml") htmlQ = Math.max(htmlQ, q);
+    else if (media === "*/*") wildcardQ = Math.max(wildcardQ, q);
+  }
+  return jsonQ > 0 && jsonQ >= htmlQ && jsonQ >= wildcardQ;
+}
+
 function encodeState(obj) {
   return btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
@@ -487,26 +560,35 @@ function decodeState(s) {
 
 /* ─── signed session cookie (Web Crypto HMAC) ─── */
 
-function cookieSameSite(env) {
-  // Cross-origin console (Pages) needs None; same-site Worker UI can use Lax.
-  if (consoleOrigins(env).length) return "None";
-  return "Lax";
+function cookieAttrs(env, requestUrl) {
+  let host = "";
+  try {
+    host = new URL(requestUrl).hostname.toLowerCase();
+  } catch {
+    /* ignore */
+  }
+  // Same eTLD+1 as console (app.*.work): Lax + Domain. Cross-site workers.dev: None.
+  if (host.endsWith(".securepublish.work") || host === "securepublish.work") {
+    return { sameSite: "Lax", domain: "; Domain=.securepublish.work" };
+  }
+  if (consoleOrigins(env).length) return { sameSite: "None", domain: "" };
+  return { sameSite: "Lax", domain: "" };
 }
 
-async function mintSessionCookie(payload, secret, env = {}) {
+async function mintSessionCookie(payload, secret, env = {}, requestUrl = "") {
   const body = btoa(JSON.stringify(payload))
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
   const sig = await hmacSign(body, secret);
   const value = `${body}.${sig}`;
-  const sameSite = cookieSameSite(env);
-  return `${COOKIE_NAME}=${value}; Path=/; HttpOnly; Secure; SameSite=${sameSite}; Max-Age=${SESSION_TTL_SEC}`;
+  const { sameSite, domain } = cookieAttrs(env, requestUrl);
+  return `${COOKIE_NAME}=${value}; Path=/${domain}; HttpOnly; Secure; SameSite=${sameSite}; Max-Age=${SESSION_TTL_SEC}`;
 }
 
-function clearSessionCookie(env = {}) {
-  const sameSite = cookieSameSite(env);
-  return `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=${sameSite}; Max-Age=0`;
+function clearSessionCookie(env = {}, requestUrl = "") {
+  const { sameSite, domain } = cookieAttrs(env, requestUrl);
+  return `${COOKIE_NAME}=; Path=/${domain}; HttpOnly; Secure; SameSite=${sameSite}; Max-Age=0`;
 }
 
 async function readSessionCookie(request, secret) {
@@ -547,4 +629,4 @@ function timingSafeEqual(a, b) {
 }
 
 /** Test/helper export */
-export { readSessionCookie, mintSessionCookie, COOKIE_NAME };
+export { readSessionCookie, mintSessionCookie, clearSessionCookie, COOKIE_NAME };

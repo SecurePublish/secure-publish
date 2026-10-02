@@ -211,3 +211,76 @@ describe("API routes — Marcus checklist", () => {
     assert.equal(res.status, 403);
   });
 });
+
+describe("GET|POST /auth/logout", () => {
+  const baseEnv = {
+    PANELS: memoryKv(),
+    CONSOLE_ORIGIN: "https://app.securepublish.work,https://secure-publish-app.pages.dev",
+    SESSION_SECRET: "test-session-secret-at-least-32-chars",
+    GOOGLE_CLIENT_ID: "gid",
+    GOOGLE_CLIENT_SECRET: "gsecret",
+  };
+
+  it("GET clears cookie (Lax+Domain on *.securepublish.work) and redirects to /signup/", async () => {
+    const res = await worker.fetch(
+      new Request("https://demo.securepublish.work/auth/logout", { redirect: "manual" }),
+      baseEnv
+    );
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get("location"), "https://app.securepublish.work/signup/");
+    const setCookie = res.headers.get("set-cookie") || "";
+    assert.match(setCookie, /secure_publish_session=/);
+    assert.match(setCookie, /Max-Age=0/);
+    assert.match(setCookie, /Domain=\.securepublish\.work/);
+    assert.match(setCookie, /SameSite=Lax/);
+    assert.match(setCookie, /Secure/);
+    assert.match(setCookie, /HttpOnly/);
+  });
+
+  it("POST is idempotent without prior session", async () => {
+    const res = await worker.fetch(
+      new Request("https://demo.securepublish.work/auth/logout", {
+        method: "POST",
+        redirect: "manual",
+      }),
+      baseEnv
+    );
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get("location"), "https://app.securepublish.work/signup/");
+  });
+
+  it("allowlisted ?next= wins; evil origin falls back to signup", async () => {
+    const ok = await worker.fetch(
+      new Request(
+        "https://demo.securepublish.work/auth/logout?next=" +
+          encodeURIComponent("https://app.securepublish.work/app/home.html"),
+        { redirect: "manual" }
+      ),
+      baseEnv
+    );
+    assert.equal(ok.headers.get("location"), "https://app.securepublish.work/app/home.html");
+
+    const evil = await worker.fetch(
+      new Request(
+        "https://demo.securepublish.work/auth/logout?next=" +
+          encodeURIComponent("https://evil.example/phish"),
+        { redirect: "manual" }
+      ),
+      baseEnv
+    );
+    assert.equal(evil.headers.get("location"), "https://app.securepublish.work/signup/");
+  });
+
+  it("workers.dev uses SameSite=None without Domain", async () => {
+    const res = await worker.fetch(
+      new Request("https://secure-publish.clovist.workers.dev/auth/logout", {
+        redirect: "manual",
+      }),
+      baseEnv
+    );
+    assert.equal(res.status, 302);
+    const setCookie = res.headers.get("set-cookie") || "";
+    assert.match(setCookie, /SameSite=None/);
+    assert.equal(/Domain=/i.test(setCookie), false);
+  });
+});

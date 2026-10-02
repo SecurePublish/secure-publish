@@ -16,9 +16,10 @@ preview_id = "46d61ee3d1f7410fa081e383b776934a"
 # Apex/www stay on Pages. Fallback: workers_dev = true
 # See docs/DEPLOY-WILDCARD.md
 #
-[[routes]]
-pattern = "*.securepublish.work/*"
-zone_name = "securepublish.work"
+# Route managed in dashboard (API token lacks workers routes write):
+# [[routes]]
+# pattern = "*.securepublish.work/*"
+# zone_name = "securepublish.work"
 
 # ─── Console CORS (exact Pages origin(s), comma-separated) ───
 # app.securepublish.work + Pages + local pairing

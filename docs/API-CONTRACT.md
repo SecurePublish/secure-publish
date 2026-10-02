@@ -12,5 +12,6 @@ Auth: session cookie from OAuth (same-site / CORS credentials).
 | PUT | `/api/hosting/subdomain` | `{ slug }` → `{ host }` |
 | PUT | `/api/hosting/custom` | `{ hostname }` → `{ host }` |
 | GET | `/auth/{google\|microsoft\|github}` | OAuth start (Miles/John) |
+| GET\|POST | `/auth/logout` | Clear `secure_publish_session` → 302 to first `CONSOLE_ORIGIN` + `/signup/` (or allowlisted `?next=`) |
 
 Lock A: `mode=company` = same email domain after SSO. Not Workspace/Entra/GitHub Org membership.

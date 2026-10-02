@@ -60,9 +60,46 @@ async function assertHostAllowed(request, env) {
   return { ok: true };
 }
 
+/** Reserved product hosts — wildcard Worker must not treat these as panels. */
+const PAGES_ORIGIN = {
+  "app.securepublish.work": "https://secure-publish-app.pages.dev",
+  "www.securepublish.work": "https://secure-publish-landing.pages.dev",
+  "securepublish.work": "https://secure-publish-landing.pages.dev",
+};
+
+async function proxyReservedHost(request, url) {
+  const origin = PAGES_ORIGIN[url.hostname.toLowerCase()];
+  if (!origin) return null;
+  // Same-origin API + OAuth on app.* — do not forward these to Pages.
+  const p = url.pathname;
+  if (
+    p.startsWith("/api/") ||
+    p.startsWith("/auth/") ||
+    p.startsWith("/_auth/")
+  ) {
+    return null;
+  }
+  const target = new URL(url.pathname + url.search, origin);
+  const headers = new Headers(request.headers);
+  headers.set("Host", new URL(origin).host);
+  headers.delete("cf-connecting-ip");
+  const init = {
+    method: request.method,
+    headers,
+    redirect: "manual",
+  };
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    init.body = request.body;
+  }
+  return fetch(target.toString(), init);
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    const pagesProxy = await proxyReservedHost(request, url);
+    if (pagesProxy) return pagesProxy;
 
     const authRes = await handleAuthRoutes(request, env);
     if (authRes) return authRes;
@@ -91,7 +128,7 @@ export default {
           "V1: company-wide = email domain (not org membership).",
           "",
           "Console API: /api/me /api/panels /api/hosting/* (SSO required)",
-          "OAuth: /auth/{google|microsoft|github}",
+          "OAuth: /auth/{google|microsoft|github} · /auth/logout",
           "Use /{panel-id} após login SSO.",
           "Publish: secure-publish publish <file.html> [--to email,email]",
           "",

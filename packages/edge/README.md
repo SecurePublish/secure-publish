@@ -15,6 +15,7 @@ Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)
 | PUT | `/api/hosting/subdomain` | `{ slug }` → `{ host }` |
 | PUT | `/api/hosting/custom` | `{ hostname }` → claim; **not served until verified** |
 | GET | `/auth/{google\|microsoft\|github}` | OAuth start (`?next=` → return) |
+| GET\|POST | `/auth/logout` | Clear session cookie → redirect console `/signup/` (idempotent; `?next=` allowlisted) |
 | GET | `/:panelId` | HTML after SSO + ACL (Lock A) |
 
 ### Marcus checklist
