@@ -1,7 +1,9 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import http from "node:http";
+import { spawn } from "node:child_process";
 import { loadConfig, configHints } from "./config.js";
 import { loadRegistry, upsertPanel, removePanel } from "./registry.js";
 import { kvPut, kvGet, kvDelete, kvList, verifyToken } from "./cf-api.js";
@@ -28,20 +30,26 @@ Auth model:
     --to a@x,b@y       explicit email allowlist (still requires SSO)
 
 Usage:
+  secure-publish login
   secure-publish publish <file.html> [--title "..."] [--to email,email] [--mock]
+  secure-publish logout
   secure-publish list [--remote]
   secure-publish revoke <key>
   secure-publish doctor
   secure-publish mock-serve [--port 8787]
   secure-publish help
 
-Environment:
+Sign in with Google via \`login\`. Publish uses that account.
+Do not set CLOUDFLARE_API_TOKEN for publish.
+
+Operator only (\`--operator\` or SECURE_PUBLISH_OPERATOR=1) still writes KV directly:
   CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
   SECURE_PUBLISH_KV_NAMESPACE_ID
   SECURE_PUBLISH_BASE_URL
-  SECURE_PUBLISH_COMPANY_DOMAINS   tenant email domains (comma-separated)
-  SECURE_PUBLISH_MOCK=1           local mock KV (no Cloudflare)
-  OAUTH_ALLOWED_DOMAINS           same meaning on the Worker
+  SECURE_PUBLISH_COMPANY_DOMAINS
+  SECURE_PUBLISH_MOCK=1
+  OAUTH_ALLOWED_DOMAINS
+  SECURE_PUBLISH_API_BASE   default https://app.securepublish.work
 
 Config files (optional):
   ./.secure-publish.json
@@ -159,6 +167,191 @@ function decodeRecord(raw) {
   return { v: 0, html: text, access: { mode: "company", domains: [] } };
 }
 
+
+const SESSION_FILE = path.join(os.homedir(), ".secure-publish", "session.json");
+
+function apiBaseOf(cfg) {
+  return String(
+    process.env.SECURE_PUBLISH_API_BASE || cfg?.apiBase || "https://app.securepublish.work"
+  ).replace(/\/$/, "");
+}
+
+function operatorMode(flags) {
+  return Boolean(
+    flags?.operator ||
+      process.env.SECURE_PUBLISH_OPERATOR === "1" ||
+      process.env.SECURE_PUBLISH_OPERATOR === "true"
+  );
+}
+
+/** Local publish credential. Mode 0600. Never log the secret. */
+function readPublishSession() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SESSION_FILE, "utf8"));
+    const publishToken = String(raw?.publishToken || "").trim();
+    if (!/^[a-f0-9]{64}$/.test(publishToken)) return null;
+    if (raw.expiresAt && Date.parse(raw.expiresAt) <= Date.now()) return null;
+    return {
+      publishToken,
+      email: raw.email || null,
+      host: raw.host || null,
+      apiBase: raw.apiBase || null,
+      expiresAt: raw.expiresAt || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePublishSession(session) {
+  const dir = path.dirname(SESSION_FILE);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const tmp = `${SESSION_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(session, null, 2) + "\n", { mode: 0o600 });
+  fs.chmodSync(tmp, 0o600);
+  fs.renameSync(tmp, SESSION_FILE);
+  fs.chmodSync(SESSION_FILE, 0o600);
+}
+
+function clearPublishSession() {
+  try {
+    fs.unlinkSync(SESSION_FILE);
+  } catch {
+    /* absent */
+  }
+}
+
+function openLoginUrl(url) {
+  const cmd = process.platform === "darwin" ? "open" : "xdg-open";
+  try {
+    const child = spawn(cmd, [url], { stdio: "ignore", detached: true });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    /* caller prints the url */
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function cmdLogin(cfg) {
+  const apiBase = apiBaseOf(cfg);
+  const startRes = await fetch(`${apiBase}/api/device/code`, {
+    method: "POST",
+    headers: { accept: "application/json" },
+  });
+  const start = await startRes.json().catch(() => ({}));
+  if (!startRes.ok || !start.verification_url || !start.device_code) {
+    throw new Error("Não consegui abrir o login agora. Tenta de novo em instantes.");
+  }
+  console.log(start.verification_url);
+  openLoginUrl(start.verification_url);
+  const interval = Math.max(1, Number(start.interval) || 2) * 1000;
+  const deadline = Date.now() + (Number(start.expires_in) || 600) * 1000;
+  while (Date.now() < deadline) {
+    await sleep(interval);
+    const pollRes = await fetch(`${apiBase}/api/device/token`, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({ device_code: start.device_code }),
+    });
+    const poll = await pollRes.json().catch(() => ({}));
+    if (pollRes.ok && poll.access_token) {
+      const expiresIn = Number(poll.expires_in) || 0;
+      writePublishSession({
+        publishToken: poll.access_token,
+        email: poll.email || null,
+        host: poll.host || null,
+        apiBase,
+        expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      });
+      if (poll.email) console.log(`email: ${poll.email}`);
+      if (poll.host) console.log(`host: ${poll.host}`);
+      else console.log("host:");
+      return;
+    }
+    if (poll.error === "authorization_pending") continue;
+    throw new Error("Não consegui ligar a conta agora. Tenta de novo em instantes.");
+  }
+  throw new Error("Não consegui ligar a conta agora. Tenta de novo em instantes.");
+}
+
+async function cmdLogout(cfg) {
+  const session = readPublishSession();
+  if (session?.publishToken) {
+    const apiBase = (session.apiBase || apiBaseOf(cfg)).replace(/\/$/, "");
+    try {
+      await fetch(`${apiBase}/api/session/revoke`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${session.publishToken}`, accept: "application/json" },
+      });
+    } catch {
+      /* still drop the local file */
+    }
+  }
+  clearPublishSession();
+  console.log("Conta desligada nesta máquina.");
+}
+
+async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
+  const session = readPublishSession();
+  if (!session) {
+    throw new Error("Conta não ligada nesta máquina. Rode secure-publish login.");
+  }
+  const apiBase = (session.apiBase || apiBaseOf(cfg)).replace(/\/$/, "");
+  const title =
+    flags.title || path.basename(filePath, path.extname(filePath)) || "untitled";
+  const body = { html, title };
+  if (toEmails.length) body.to = toEmails;
+  const res = await fetch(`${apiBase}/api/panels`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      authorization: `Bearer ${session.publishToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  const host = data.host || session.host || "";
+  if (!res.ok) {
+    if (res.status === 401) clearPublishSession();
+    const where = host ? ` A conta está ligada em ${host}.` : "";
+    throw new Error(`Não consegui publicar agora.${where} Tenta de novo em instantes.`);
+  }
+  if (!data.url || !data.id) {
+    throw new Error(
+      `Não consegui publicar agora.${host ? ` A conta está ligada em ${host}.` : ""} Tenta de novo em instantes.`
+    );
+  }
+  const lang = flags.lang === "en" ? "en" : "pt";
+  const entry = {
+    key: data.id,
+    title: data.title || title,
+    sourcePath: filePath,
+    publishedAt: data.publishedAt || new Date().toISOString(),
+    url: data.url,
+    access: {
+      mode: data.mode || (toEmails.length ? "allowlist" : "company"),
+      emails: data.allowlist || toEmails,
+    },
+    mock: false,
+  };
+  upsertPanel(entry);
+  console.log(
+    publishSuccessMessage(
+      { mode: entry.access.mode, url: data.url, emails: data.allowlist || toEmails },
+      lang
+    )
+  );
+  console.log(`key:    ${data.id}`);
+  console.log(`title:  ${entry.title}`);
+  console.log(`host:   ${data.host || host}`);
+  return entry;
+}
+
 async function cmdPublish(fileArg, flags, cfg) {
   if (!fileArg) {
     throw new Error(
@@ -171,8 +364,7 @@ async function cmdPublish(fileArg, flags, cfg) {
   if (!html.trim()) throw new Error("HTML file is empty");
 
   const useMock = Boolean(flags.mock || cfg.mock);
-  if (!useMock) requireCf(cfg);
-
+  const useOperator = operatorMode(flags);
   const toEmails = parseToFlag(flags.to);
   if (flags.to !== undefined && flags.to !== true && toEmails.length === 0) {
     throw new Error(
@@ -184,6 +376,11 @@ async function cmdPublish(fileArg, flags, cfg) {
     toEmails,
     companyDomains: cfg.companyDomains,
   });
+
+  if (!useMock && !useOperator) {
+    return publishViaAccount(filePath, html, flags, cfg, toEmails);
+  }
+  if (!useMock) requireCf(cfg);
 
   if (access.mode === "company" && !access.domains.length && !useMock) {
     process.stderr.write(
@@ -349,6 +546,20 @@ async function cmdRevoke(key, cfg, flags) {
 }
 
 async function cmdDoctor(cfg) {
+  if (!cfg.mock && !operatorMode({})) {
+    const lines = ["secure-publish doctor", "─────────────────────"];
+    const session = readPublishSession();
+    if (session) {
+      lines.push(`Status: conta ligada${session.email ? " (" + session.email + ")" : ""}.`);
+      if (session.host) lines.push(`host: ${session.host}`);
+      lines.push("Next: secure-publish publish <file.html>");
+    } else {
+      lines.push("Status: conta não ligada nesta máquina.");
+      lines.push("Next: secure-publish login");
+    }
+    console.log(lines.join("\n"));
+    return session ? 0 : 1;
+  }
   const lines = [];
   lines.push("secure-publish doctor");
   lines.push("─────────────────────");
@@ -556,6 +767,12 @@ export async function main(argv) {
   if (args.flags.mock) cfg.mock = true;
 
   switch (cmd) {
+    case "login":
+      await cmdLogin(cfg);
+      break;
+    case "logout":
+      await cmdLogout(cfg);
+      break;
     case "publish":
       await cmdPublish(args._[1], args.flags, cfg);
       break;

@@ -7,6 +7,11 @@ Auth: session cookie from OAuth (same-site / CORS credentials).
 | Method | Path | Notes |
 |--------|------|--------|
 | GET | `/api/me` | `{ email, idp, domain, host }` |
+| POST | `/api/panels` | SSO cookie **or** `Authorization: Bearer` publish credential (not a browser cookie). Body `{ html, title?, to? }`. Default access = company (session email domain). `201 { ok, id, url, host, mode, allowlist, title, publishedAt }` with `url` = `https://{host}/{id}`. `409 no_host` if the account has no host. `413 html_too_large` over 1.5MB. `401` with no session. Publisher is always the signed-in account. |
+| POST | `/api/device/code` | No session. Starts a one-time login. `{ device_code, verification_url, expires_in, interval }` |
+| POST | `/api/device/token` | No session. Poll with `{ device_code }`. Pending: `authorization_pending`. Once: `{ access_token, token_type: Bearer, email, host, expires_in }` (12h, publish-only). Replay: `expired_token`. |
+| POST | `/api/device/bind` | SSO only. Account owner links the one-time code. Single-use. |
+| POST | `/api/session/revoke` | `Authorization: Bearer` drops that publish credential. |
 | GET | `/api/panels?scope=mine\|company` | `{ host, panels: [{ id, publisherEmail, mode: company\|allowlist, allowlist[], publishedAt, publishedLabel?, views, viewers: [{email,first,last}] }] }` |
 | PATCH | `/api/panels/:id/access` | body `{ mode, allowlist[], sendInvite? }` — publisher only |
 | PUT | `/api/hosting/subdomain` | `{ slug }` → `{ host }` |

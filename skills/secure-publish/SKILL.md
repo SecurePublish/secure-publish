@@ -2,15 +2,15 @@
 name: secure-publish
 description: >-
   Publish an AI HTML dashboard with Secure Publish so only people on the
-  company email domain (after SSO) — or an explicit --to email list — can open
-  it. Use when the user asks to publish, share, or host an HTML dashboard/panel
-  for their company, or to restrict it to specific emails. V1 is email-domain
-  ACL, not Workspace/Entra/GitHub Org membership.
+  company email domain (after sign-in) — or an explicit --to email list — can
+  open it. Use when the user asks to publish, share, or host an HTML
+  dashboard/panel for their company, or to restrict it to specific emails.
+  V1 is email-domain access, not Workspace/Entra/GitHub Org membership.
 ---
 
 # Secure Publish
 
-Agent-first path: link an account, pick hosting, publish HTML. There is no web “publish” button. The console only tracks URLs and views.
+There is no web “publish” button. The console only tracks URLs and views.
 
 Install (already used by the landing):
 
@@ -27,90 +27,71 @@ User prompts this skill handles:
 - EN: *Publish this HTML for the whole company.*
 - EN: *Publish only to jane@acme.com.*
 
-## What you do
+## What you say
 
-1. **Account.** If the user has no linked Secure Publish account, say (PT):
+Say only these lines about sign-in and publish. Do not explain the mechanism.
 
-   > Você ainda não tem conta Secure Publish. Vou abrir o cadastro — entre com Google, Microsoft ou GitHub (e-mail da empresa).
+If this machine is not signed in yet, say exactly:
 
-   EN: *You don’t have a Secure Publish account yet. I’ll open signup — use Google, Microsoft, or GitHub (company email).*
+> Vou abrir o login. Entra com Google na página que abrir — a conta fica ligada nesta máquina.
 
-   Open signup (product URL when live). After they start, say:
+Then run `secure-publish login` and wait. Google only — not Microsoft, not GitHub. When it finishes, say exactly:
 
-   > Depois de criar a conta, volto aqui. Código de vínculo: {code}
+> Conta ligada. Publicando em {host}, aberto pra empresa.
 
-   EN: *After you create the account, I’ll continue here. Link code: {code}*
+Use the host the command printed. If there is no host yet, ask where to publish. Do not invent one.
 
-   When linked: **Conta vinculada.** / *Account linked.*
+Then publish:
 
-2. **Hosting.** If no host is set:
+```bash
+secure-publish publish ./dashboard.html --title "Painel"
+secure-publish publish ./dashboard.html --to clovis@wises.com.br,ana@wises.com.br
+```
 
-   > Onde publicar? Posso reservar {slug}.securepublish.work ou você usa um domínio próprio.
+Company-wide means the same email domain as the signed-in account. If they did not say who can see it, ask once:
 
-   EN: *Where should we host? I can reserve {slug}.securepublish.work or you can use a custom domain.*
+> Quer restringir a alguém? Passe os e-mails (senão fica aberto pra empresa — mesmo domínio de e-mail).
 
-3. **Publish** with the CLI (from the repo or global bin):
+On success, say exactly (do not invent `{url}` — only the url the command printed):
 
-   ```bash
-   # whole company = same email domain as the tenant (V1 default)
-   secure-publish publish ./dashboard.html --title "Painel"
+> Publicado pra **toda a empresa**: {url}
 
-   # restrict to specific people (flag name is --to)
-   secure-publish publish ./dashboard.html --to clovis@wises.com.br,ana@wises.com.br
-   ```
+If they passed emails:
 
-   Before publishing, if they didn’t say who can see it, ask:
+> Publicado só para {emails}: {url}
 
-   > Quer restringir a alguém? Passe os e-mails (senão fica aberto pra empresa — mesmo domínio de e-mail).
+On any failure, say exactly:
 
-   EN: *Want to restrict access? Pass emails (otherwise it’s open to the company — same email domain).*
+> Não consegui publicar agora. A conta está ligada em {host}. Tenta de novo em instantes.
 
-4. **Tell them the result** (do not invent a URL):
+If the command says the account is not linked, go back to the login line. Never ask them for an infrastructure secret.
 
-   - Company default: `Publicado pra **toda a empresa**: {url}` / *Published for the **whole company**: {url}*
-   - Allowlist: `Publicado só para {emails}: {url}` / *Published only for {emails}: {url}*
+## Access (V1)
 
-## ACL (V1 Lock A) — do not claim org membership
+| UI label | Command | What it actually checks |
+|----------|---------|-------------------------|
+| Toda a empresa / Whole company | default (no `--to`) | Email **domain** after sign-in. Example: `@wises.com.br`. |
+| Só estas pessoas / Only these people | `--to a@x,b@y` | Explicit email list. Still requires sign-in. |
 
-| UI label | CLI | What it actually checks |
-|----------|-----|-------------------------|
-| Toda a empresa / Whole company | default (no `--to`); metadata mode `company` or `org` | Email **domain** allowlist after SSO (`OAUTH_ALLOWED_DOMAINS` / tenant domain). Example: `@wises.com.br`. |
-| Só estas pessoas / Only these people | `--to a@x,b@y` | Explicit email allowlist. Still requires sign-in. |
-
-- Same domain as the tenant is the default when `--to` is omitted.
-- This is **not** Google Workspace, Microsoft Entra, or GitHub Org membership. That is a later phase.
+- Same domain as the account is the default when `--to` is omitted.
+- This is **not** Google Workspace, Microsoft Entra, or GitHub Org membership.
 - A personal account on the same domain can pass a domain-only policy. Say so if asked.
-- `--to` stays the flag name. Do not rename it to `--allow` or `--org`.
+- `--to` stays the flag name.
 
 ## Errors (user-facing)
 
 | Situation | PT | EN |
 |-----------|----|----|
 | Email not on company domain | Seu e-mail não é do domínio desta empresa. Peça acesso ou use a conta corporativa. | Your email isn’t on this company’s domain. Ask for access or use your work account. |
-| Signed in, no permission (other dashboard / allowlist) | Você está logado, mas não tem permissão neste dashboard. | You’re signed in, but you don’t have access to this dashboard. |
-| Missing `--to` emails when they asked for a list | Inclua pelo menos um e-mail | Add at least one email |
+| Signed in, no permission | Você está logado, mas não tem permissão neste dashboard. | You’re signed in, but you don’t have access to this dashboard. |
+| Missing emails when they asked for a list | Inclua pelo menos um e-mail | Add at least one email |
 
-## Security checklist (mock ≠ product)
+## Do not claim
 
-1. **Mock ≠ SSO.** A “Continuar como …” screen on the landing/demo proves the *flow*; it authenticates nobody. Never say “real Google/Microsoft/GitHub login” about that page.
-2. **Do not imitate IdP UI.** No logos, brand colors, or a fake Google window. Use a generic “Continuar como …” plus a visible label: *Demo do fluxo · não é login de verdade*.
-3. **The panel URL is not a credential.** `/{panel-id}` only identifies HTML in KV. Without an SSO session (Access JWT or OAuth cookie), the Worker returns 403 — even with the URL.
-4. **Domain allowlist ≠ org membership.** `OAUTH_ALLOWED_DOMAINS` (email `@empresa.com`) or an Access “emails ending in” policy is a **domain allowlist**. It does **not** check Google Workspace / Entra / GitHub Org membership. A personal account on the same domain can pass if the policy is only “authenticated” plus domain.
-5. **Do not claim:** E2E encryption, compliance/SOC2, “nobody ever leaks”, “compatible with IdP X” before that IdP’s OAuth/Access is actually connected, a waitlist that “already saved the email” without real storage, or `SSO_DEV_BYPASS` / mock auth in production.
+1. A “Continuar como …” screen on the landing/demo proves the *flow*; it authenticates nobody.
+2. Do not imitate the Google window. No logos or brand colors on a fake sign-in.
+3. The panel URL is not a credential. Without sign-in, the page does not return the HTML.
+4. A domain list is not org membership.
+5. Do not claim E2E encryption, compliance/SOC2, “nobody ever leaks”, or a waitlist that already saved the email.
 
-## Ban list (copy)
-
-Do not use: gate, gated, waitlist, early access, “SSO coming soon”, “copie e rode agora” as if production install were already live, compliance, E2E, zero trust, “org member”, “Workspace membership”, “Entra member”, “GitHub Org member” as a V1 guarantee.
-
-## Local mock (no Cloudflare)
-
-```bash
-export SECURE_PUBLISH_MOCK=1
-export SECURE_PUBLISH_COMPANY_DOMAINS=empresa.com
-node packages/cli/bin/secure-publish.js publish examples/panel-vendas.html --title "Painel Vendas Q3"
-node packages/cli/bin/secure-publish.js mock-serve --port 8787
-# another shell:
-curl -D- -H 'X-Mock-User: ana@empresa.com' http://127.0.0.1:8787/<key>
-```
-
-`X-Mock-User` simulates a signed-in session. It is not SSO. Never enable mock auth in production.
+Do not use: gate, gated, waitlist, early access, “SSO coming soon”, compliance, E2E, zero trust, “org member”, “Workspace membership”.

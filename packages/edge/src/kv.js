@@ -398,3 +398,157 @@ export async function verifyCustomHostname(kv, email, opts = {}) {
     tenant: updated,
   };
 }
+
+
+const DEVICE_TTL_SEC = 600;
+/** Publish-only credential. 12h, revocable. Not a browser cookie. */
+const PUBLISH_TOKEN_TTL_SEC = 60 * 60 * 12;
+
+function randomHex(byteLen) {
+  const bytes = new Uint8Array(byteLen);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(String(value))
+  );
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * One-time device login. The browser cookie stays HttpOnly; the CLI only
+ * receives a publish token after the account owner finishes Google sign-in.
+ */
+export async function createDeviceCode(kv) {
+  const device_code = randomHex(32);
+  const exp = Math.floor(Date.now() / 1000) + DEVICE_TTL_SEC;
+  await kv.put(`device:${device_code}`, JSON.stringify({ status: "pending", exp }));
+  return { device_code, expires_in: DEVICE_TTL_SEC, interval: 2 };
+}
+
+export async function approveDeviceCode(kv, code, email) {
+  if (!/^[a-f0-9]{64}$/.test(String(code || ""))) {
+    return { ok: false, status: 400, error: "invalid_request" };
+  }
+  const owner = String(email || "").trim().toLowerCase();
+  if (!owner.includes("@")) return { ok: false, status: 400, error: "missing_email" };
+  const key = `device:${code}`;
+  const raw = await kv.get(key);
+  if (!raw) return { ok: false, status: 400, error: "expired_token" };
+  let rec;
+  try {
+    rec = JSON.parse(raw);
+  } catch {
+    return { ok: false, status: 400, error: "expired_token" };
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (!rec.exp || rec.exp < now || rec.status === "consumed") {
+    await kv.delete(key);
+    return { ok: false, status: 400, error: "expired_token" };
+  }
+  // Single-use: a second approval does not mint another credential or wipe the first.
+  if (rec.status !== "pending") {
+    return { ok: false, status: 400, error: "expired_token" };
+  }
+  const accessToken = randomHex(32);
+  const tokenHash = await sha256Hex(accessToken);
+  const tokenExp = now + PUBLISH_TOKEN_TTL_SEC;
+  await kv.put(`pubtok:${tokenHash}`, JSON.stringify({ email: owner, exp: tokenExp }));
+  const idxKey = `pubtok-idx:${owner}`;
+  const idxRaw = await kv.get(idxKey);
+  let hashes = [];
+  try {
+    const parsed = idxRaw ? JSON.parse(idxRaw) : [];
+    if (Array.isArray(parsed)) hashes = parsed.map(String);
+  } catch {
+    hashes = [];
+  }
+  if (!hashes.includes(tokenHash)) hashes.push(tokenHash);
+  await kv.put(idxKey, JSON.stringify(hashes));
+  await kv.put(
+    key,
+    JSON.stringify({ status: "approved", exp: rec.exp, email: owner, accessToken, tokenExp })
+  );
+  return { ok: true, email: owner };
+}
+
+export async function pollDeviceCode(kv, code) {
+  if (!/^[a-f0-9]{64}$/.test(String(code || ""))) {
+    return { ok: false, status: 400, error: "invalid_request" };
+  }
+  const key = `device:${code}`;
+  const raw = await kv.get(key);
+  if (!raw) return { ok: false, status: 400, error: "expired_token" };
+  let rec;
+  try {
+    rec = JSON.parse(raw);
+  } catch {
+    return { ok: false, status: 400, error: "expired_token" };
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (!rec.exp || rec.exp < now || rec.status === "consumed") {
+    await kv.delete(key);
+    return { ok: false, status: 400, error: "expired_token" };
+  }
+  if (rec.status !== "approved" || !rec.accessToken) {
+    return { ok: false, status: 400, error: "authorization_pending" };
+  }
+  const accessToken = rec.accessToken;
+  const email = rec.email;
+  const tokenExp = rec.tokenExp;
+  await kv.put(key, JSON.stringify({ status: "consumed", exp: rec.exp, email }));
+  return { ok: true, accessToken, email, tokenExp };
+}
+
+export async function userFromPublishToken(kv, token) {
+  const rawToken = String(token || "").trim();
+  if (!/^[a-f0-9]{64}$/.test(rawToken)) return null;
+  const hash = await sha256Hex(rawToken);
+  const raw = await kv.get(`pubtok:${hash}`);
+  if (!raw) return null;
+  try {
+    const rec = JSON.parse(raw);
+    if (!rec?.email || !rec.exp || rec.exp < Math.floor(Date.now() / 1000)) return null;
+    return { email: String(rec.email).trim().toLowerCase() };
+  } catch {
+    return null;
+  }
+}
+
+
+/** Drop one publish credential (logout / revoke). */
+export async function revokePublishToken(kv, token) {
+  const rawToken = String(token || "").trim();
+  if (!/^[a-f0-9]{64}$/.test(rawToken)) {
+    return { ok: false, status: 401, error: "unauthorized" };
+  }
+  const hash = await sha256Hex(rawToken);
+  const raw = await kv.get(`pubtok:${hash}`);
+  if (!raw) return { ok: false, status: 401, error: "unauthorized" };
+  let rec;
+  try {
+    rec = JSON.parse(raw);
+  } catch {
+    return { ok: false, status: 401, error: "unauthorized" };
+  }
+  await kv.delete(`pubtok:${hash}`);
+  const email = String(rec.email || "").trim().toLowerCase();
+  if (email) {
+    const idxKey = `pubtok-idx:${email}`;
+    const idxRaw = await kv.get(idxKey);
+    let hashes = [];
+    try {
+      const parsed = idxRaw ? JSON.parse(idxRaw) : [];
+      if (Array.isArray(parsed)) hashes = parsed.map(String);
+    } catch {
+      hashes = [];
+    }
+    hashes = hashes.filter((h) => h !== hash);
+    if (hashes.length) await kv.put(idxKey, JSON.stringify(hashes));
+    else await kv.delete(idxKey);
+  }
+  return { ok: true };
+}
