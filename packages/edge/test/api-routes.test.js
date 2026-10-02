@@ -32,6 +32,14 @@ function memoryKv(initial = {}) {
 const PANEL_ID = "aaaaaaaaaaaaaaaaaaaaaaaa";
 const PANEL_OTHER = "bbbbbbbbbbbbbbbbbbbbbbbb";
 
+function setCookies(res) {
+  if (typeof res.headers.getSetCookie === "function") {
+    return res.headers.getSetCookie();
+  }
+  const raw = res.headers.get("set-cookie");
+  return raw ? [raw] : [];
+}
+
 describe("API routes — Marcus checklist", () => {
   let env;
 
@@ -92,6 +100,8 @@ describe("API routes — Marcus checklist", () => {
     assert.equal(body.idp, "dev-bypass");
     assert.equal(body.domain, "localhost");
     assert.ok("host" in body);
+    // No subdomain claimed yet — must be null, never "" (console would show https:///{id})
+    assert.equal(body.host, null);
     assert.equal(res.headers.get("Access-Control-Allow-Origin"), "https://console.pages.dev");
     assert.equal(res.headers.get("Access-Control-Allow-Credentials"), "true");
   });
@@ -107,6 +117,7 @@ describe("API routes — Marcus checklist", () => {
     const body = await res.json();
     assert.ok(Array.isArray(body.panels));
     assert.ok("host" in body);
+    assert.equal(body.host, null); // no hosting yet — do not fabricate https:///
     const p = body.panels.find((x) => x.id === PANEL_ID);
     assert.ok(p);
     assert.equal(p.publisherEmail, "dev@localhost");
@@ -172,6 +183,48 @@ describe("API routes — Marcus checklist", () => {
     assert.equal(body.host, "wise.securepublish.work");
   });
 
+  it("after subdomain claim, /api/me and /api/panels emit non-empty host", async () => {
+    const me = await worker.fetch(
+      new Request("https://worker.test/api/me", {
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      env
+    );
+    const meBody = await me.json();
+    assert.equal(meBody.host, "wise.securepublish.work");
+    assert.notEqual(meBody.host, "");
+
+    const panels = await worker.fetch(
+      new Request("https://worker.test/api/panels?scope=mine", {
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      env
+    );
+    const panelsBody = await panels.json();
+    assert.equal(panelsBody.host, "wise.securepublish.work");
+    assert.notEqual(panelsBody.host, "");
+  });
+
+  it("empty host is never emitted (whitespace DEFAULT_PANEL_HOST → null)", async () => {
+    const fresh = {
+      PANELS: memoryKv(),
+      SSO_DEV_BYPASS: "1",
+      CONSOLE_ORIGIN: "https://console.pages.dev",
+      OAUTH_ALLOWED_DOMAINS: "localhost",
+      DEFAULT_PANEL_HOST: "   ",
+    };
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/me", {
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      fresh
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.host, null);
+    assert.notEqual(body.host, "");
+  });
+
   it("(5) PUT /api/hosting/custom claims but does not verify", async () => {
     const res = await worker.fetch(
       new Request("https://worker.test/api/hosting/custom", {
@@ -221,30 +274,28 @@ describe("GET|POST /auth/logout", () => {
     GOOGLE_CLIENT_SECRET: "gsecret",
   };
 
-  it("GET clears cookie (Lax+Domain on *.securepublish.work) and redirects to /signup/", async () => {
+  it("GET clears cookie (4 Set-Cookie: host-only+Domain, Lax+None) and redirects", async () => {
     const res = await worker.fetch(
       new Request("https://demo.securepublish.work/auth/logout", { redirect: "manual" }),
       baseEnv
     );
     assert.equal(res.status, 302);
     assert.equal(res.headers.get("location"), "https://app.securepublish.work/signup/");
-    const cookies = typeof res.headers.getSetCookie === "function"
-      ? res.headers.getSetCookie()
-      : [res.headers.get("set-cookie") || ""];
-    assert.ok(cookies.length >= 2, `expected ≥2 Set-Cookie clears, got ${cookies.length}`);
-    const joined = cookies.join("\n");
-    assert.match(joined, /secure_publish_session=/);
-    assert.match(joined, /Max-Age=0/);
-    assert.match(joined, /Domain=\.securepublish\.work/);
-    assert.match(joined, /SameSite=Lax/);
-    assert.match(joined, /Secure/);
-    assert.match(joined, /HttpOnly/);
-    // Host-only clear (no Domain) must be present to kill pre-Domain zombies
-    assert.ok(
-      cookies.some((c) => /Max-Age=0/i.test(c) && !/Domain=/i.test(c) && /SameSite=Lax/i.test(c)),
-      "missing host-only SameSite=Lax clear"
-    );
+    const cookies = setCookies(res);
+    assert.equal(cookies.length, 4, `expected 4 Set-Cookie clears, got ${cookies.length}: ${cookies.join(" || ")}`);
+    for (const c of cookies) {
+      assert.match(c, /secure_publish_session=/);
+      assert.match(c, /Max-Age=0/);
+      assert.match(c, /Secure/);
+      assert.match(c, /HttpOnly/);
+      assert.match(c, /Path=\//);
+    }
+    assert.ok(cookies.some((c) => /SameSite=Lax/i.test(c) && !/Domain=/i.test(c)), "host-only Lax");
+    assert.ok(cookies.some((c) => /SameSite=Lax/i.test(c) && /Domain=\.securepublish\.work/i.test(c)), "Domain Lax");
+    assert.ok(cookies.some((c) => /SameSite=None/i.test(c) && !/Domain=/i.test(c)), "host-only None");
+    assert.ok(cookies.some((c) => /SameSite=None/i.test(c) && /Domain=\.securepublish\.work/i.test(c)), "Domain None");
   });
+
 
   it("POST is idempotent without prior session", async () => {
     const res = await worker.fetch(
@@ -280,12 +331,13 @@ describe("GET|POST /auth/logout", () => {
       const res = await worker.fetch(request, baseEnv);
       assert.equal(res.status, 200);
       assert.equal(await res.text(), "Sessão encerrada.\n");
-      assert.match(res.headers.get("set-cookie") || "", /Max-Age=0/);
+      assert.ok(setCookies(res).some((c) => /Max-Age=0/.test(c)));
     }
   });
 
-  it("clear-cookie attrs match mint (Path/SameSite/Secure/Domain)", async () => {
-    const { mintSessionCookie, clearSessionCookie } = await import("../src/sso.js");
+  it("clear variants cover mint attrs (host-only + Domain, Lax + None)", async () => {
+    const { mintSessionCookie, clearSessionCookie, clearSessionCookieVariants } =
+      await import("../src/sso.js");
     const url = "https://demo.securepublish.work/";
     const minted = await mintSessionCookie(
       { email: "a@wises.com.br", provider: "google", exp: 9999999999 },
@@ -302,9 +354,21 @@ describe("GET|POST /auth/logout", () => {
         .filter((p) => p && !p.startsWith("max-age="))
         .sort();
     assert.deepEqual(attrs(cleared), attrs(minted));
+
+    const variants = clearSessionCookieVariants(baseEnv, url);
+    assert.equal(variants.length, 4);
+    assert.ok(
+      variants.some((v) => /Domain=\.securepublish\.work/i.test(v) && /SameSite=Lax/i.test(v)),
+      "Domain+Lax clear present"
+    );
+    assert.ok(
+      variants.some((v) => /SameSite=Lax/i.test(v) && !/Domain=/i.test(v)),
+      "host-only Lax clear present"
+    );
   });
 
-  it("workers.dev uses SameSite=None without Domain", async () => {
+
+  it("workers.dev logout still emits all 4 clears (incl. Domain for cross-host zombies)", async () => {
     const res = await worker.fetch(
       new Request("https://secure-publish.clovist.workers.dev/auth/logout", {
         redirect: "manual",
@@ -312,11 +376,10 @@ describe("GET|POST /auth/logout", () => {
       baseEnv
     );
     assert.equal(res.status, 302);
-    const cookies = typeof res.headers.getSetCookie === "function"
-      ? res.headers.getSetCookie()
-      : [res.headers.get("set-cookie") || ""];
-    const joined = cookies.join("\n");
-    assert.match(joined, /SameSite=None/);
-    assert.equal(cookies.some((c) => /Domain=/i.test(c)), false);
+    const cookies = setCookies(res);
+    assert.equal(cookies.length, 4);
+    assert.ok(cookies.some((c) => /SameSite=None/i.test(c) && !/Domain=/i.test(c)));
+    assert.ok(cookies.some((c) => /Domain=\.securepublish\.work/i.test(c)));
   });
+
 });

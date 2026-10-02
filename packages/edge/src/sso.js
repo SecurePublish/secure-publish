@@ -598,26 +598,23 @@ function clearSessionCookie(env = {}, requestUrl = "") {
 
 /**
  * All Set-Cookie clears needed to kill current + legacy session cookies.
- * Domain-scoped clear alone does NOT delete a host-only cookie of the same name.
+ * Domain-scoped clear alone does NOT delete a host-only cookie of the same name
+ * (zombie session on app.securepublish.work after logout). Always emit every
+ * historical mint shape — host-only vs Domain, Lax vs None (workers.dev era).
+ * Callers must Headers.append each line (never join into one Set-Cookie).
  * @returns {string[]}
  */
-function clearSessionCookieVariants(env = {}, requestUrl = "") {
-  const { sameSite, domain } = cookieAttrs(env, requestUrl);
-  const out = [];
-  const add = (line) => {
-    if (!out.includes(line)) out.push(line);
-  };
-  // 1) Match current mint attrs (Domain + SameSite when on *.securepublish.work)
-  add(`${COOKIE_NAME}=; Path=/${domain}; HttpOnly; Secure; SameSite=${sameSite}; Max-Age=0`);
-  // 2) Host-only Lax — kills cookies minted before Domain=.securepublish.work
-  add(`${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
-  // 3) Legacy SameSite=None host-only (workers.dev / early custom mint)
-  add(`${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0`);
-  // 4) Legacy SameSite=None with Domain (if Domain ever paired with None)
-  if (domain) {
-    add(`${COOKIE_NAME}=; Path=/${domain}; HttpOnly; Secure; SameSite=None; Max-Age=0`);
-  }
-  return out;
+function clearSessionCookieVariants(_env = {}, _requestUrl = "") {
+  return [
+    // 1) Host-only Lax
+    `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`,
+    // 2) Domain Lax (current *.securepublish.work mint)
+    `${COOKIE_NAME}=; Path=/; Domain=.securepublish.work; HttpOnly; Secure; SameSite=Lax; Max-Age=0`,
+    // 3) Host-only None (workers.dev / early cross-site mint)
+    `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0`,
+    // 4) Domain None (legacy pairing)
+    `${COOKIE_NAME}=; Path=/; Domain=.securepublish.work; HttpOnly; Secure; SameSite=None; Max-Age=0`,
+  ];
 }
 
 async function readSessionCookie(request, secret) {

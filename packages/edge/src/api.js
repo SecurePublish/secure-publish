@@ -124,26 +124,41 @@ export async function handleApiRoutes(request, env) {
   return err("not_found", 404, request, env);
 }
 
+/**
+ * Serving host for console URLs. Returns null until the tenant claims hosting
+ * (subdomain / verified custom). Never returns "" — empty string made the
+ * console fabricate https:///{id}.
+ */
+function normalizeHost(host) {
+  if (host == null) return null;
+  const h = String(host).trim();
+  return h || null;
+}
+
 async function resolveHost(kv, email, env) {
   const tenant = await getTenant(kv, email);
   if (tenant?.customHostname && tenant.customVerified) {
-    return tenant.customHostname;
+    return normalizeHost(tenant.customHostname);
   }
-  if (tenant?.host) return tenant.host;
-  if (tenant?.slug) return `${tenant.slug}.securepublish.work`;
-  // Fallback: Worker hostname hint from env (not a claim).
-  return env.DEFAULT_PANEL_HOST || null;
+  if (tenant?.host) return normalizeHost(tenant.host);
+  if (tenant?.slug) {
+    const slug = String(tenant.slug).trim();
+    if (slug) return `${slug}.securepublish.work`;
+  }
+  // Optional env hint only — still must be non-empty.
+  return normalizeHost(env.DEFAULT_PANEL_HOST);
 }
 
 async function handleMe(request, env, { email, domain, idp }) {
-  const host = (await resolveHost(env.PANELS, email, env)) || "";
+  const host = await resolveHost(env.PANELS, email, env);
+  // host is string | null — never ""
   return json({ email, idp, domain, host }, 200, request, env);
 }
 
 async function handleListPanels(request, env, url, { email, domain }) {
   const scope = (url.searchParams.get("scope") || "mine").toLowerCase();
   const kv = env.PANELS;
-  const host = (await resolveHost(kv, email, env)) || "";
+  const host = await resolveHost(kv, email, env);
 
   let ids;
   if (scope === "company") {
@@ -298,7 +313,8 @@ async function handleCustom(request, env, { email }) {
   // Contract: { host }. Until verified, return current serving host (subdomain) if any.
   return json(
     {
-      host: result.host || result.customHostname,
+      // Serving host only if already claimed (subdomain); never "" .
+      host: normalizeHost(result.host),
       customHostname: result.customHostname,
       customVerified: false,
       verify: result.verify,
