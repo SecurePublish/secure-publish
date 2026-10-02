@@ -265,14 +265,50 @@ export async function handleAuthRoutes(request, env) {
   return new Response("Not found\n", { status: 404 });
 }
 
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 /** @param {URL} url @param {Record<string, string | undefined>} env */
 function loginPage(url, env) {
   const returnTo = url.searchParams.get("return_to") || "/";
+  const en = url.searchParams.get("lang") === "en";
+  const copy = en
+    ? {
+        title: "Sign in to view",
+        lede: "Sign in with your company account to view the dashboard.",
+        tip: "Use your company Google account — the same email domain controls who can view.",
+        google: "Continue with Google",
+        other: (n) => `Continue with ${n}`,
+        langLabel: "Language",
+      }
+    : {
+        title: "Entrar para ver",
+        lede: "Entre com a conta da empresa para ver o dashboard.",
+        tip: "Use a conta Google da empresa — o mesmo domínio de e-mail define quem pode ver.",
+        google: "Continuar com Google",
+        other: (n) => `Entrar com ${n}`,
+        langLabel: "Idioma",
+      };
+
   const links = [];
   for (const [name, cfg] of Object.entries(PROVIDERS)) {
     if (env[cfg.idEnv] && env[cfg.secretEnv]) {
       const href = `/_auth/start/${name}?return_to=${encodeURIComponent(returnTo)}`;
-      links.push(`<li><a href="${href}">Entrar com ${labelProvider(name)}</a></li>`);
+      const label =
+        name === "google" ? copy.google : copy.other(labelProvider(name));
+      const icon =
+        name === "google"
+          ? `<span class="idp-btn__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="20" height="20" focusable="false"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg></span>`
+          : "";
+      links.push(
+        `<a class="idp-btn" href="${href}">${icon}<span class="idp-btn__label">${escapeHtml(label)}</span></a>`
+      );
     }
   }
   if (!links.length) {
@@ -281,17 +317,116 @@ function loginPage(url, env) {
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
   }
+
+  const langQs = (code) => {
+    const q = new URLSearchParams();
+    q.set("return_to", returnTo);
+    q.set("lang", code);
+    return `/_auth/login?${q.toString()}`;
+  };
+
   const html = `<!DOCTYPE html>
-<html lang="pt-BR"><head><meta charset="utf-8"><title>Secure Publish — Login</title>
-<style>body{font-family:system-ui;max-width:28rem;margin:4rem auto;padding:0 1rem}
-a{display:inline-block;margin:.4rem 0;padding:.6rem 1rem;background:#111;color:#fff;text-decoration:none;border-radius:6px}
-ul{list-style:none;padding:0}</style></head>
-<body><h1>Secure Publish</h1><p>Entre com a conta da empresa para ver o dashboard.</p><ul>${links.join("")}</ul></body></html>`;
+<html lang="${en ? "en" : "pt-BR"}">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>${escapeHtml(copy.title)} — Secure Publish</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,550;9..144,600&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --cream:#FAF8F5;--cream-2:#F3EFE9;--stone:#E8E2D9;--ink:#292524;--ink-soft:#57534E;--muted:#78716C;
+  --line:#E7E0D6;--sage:#5F7A61;--sage-hover:#4E6650;--sage-soft:#E8F0E9;--white:#FFFEFC;
+  --display:"Fraunces",Georgia,serif;--sans:"DM Sans",system-ui,sans-serif;
+  --radius:14px;--radius-sm:10px;
+  --shadow:0 1px 2px rgba(41,37,36,.04),0 8px 24px rgba(41,37,36,.05);
+  --max:540px;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;min-height:100vh;
+  font-family:var(--sans);font-size:1rem;line-height:1.5;color:var(--ink);
+  background:
+    radial-gradient(1200px 600px at 10% -10%,rgba(95,122,97,.08),transparent 55%),
+    var(--cream-2);
+}
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;gap:1rem;
+  padding:.85rem 1.35rem;border-bottom:1px solid var(--line);
+  background:rgba(255,254,252,.94);backdrop-filter:blur(10px);
+  position:sticky;top:0;z-index:20;
+}
+.topbar__brand{
+  font-family:var(--display);font-weight:600;font-size:1.12rem;letter-spacing:-.02em;
+  color:var(--ink);text-decoration:none;display:inline-flex;align-items:center;gap:.45rem;
+}
+.topbar__mark{display:inline-flex;width:1.35rem;height:1.35rem;color:var(--sage);flex-shrink:0}
+.topbar__mark svg{width:100%;height:100%;display:block}
+.topbar__lang{display:inline-flex;align-items:center;gap:.35rem}
+.topbar__lang a{font-size:.8rem;font-weight:500;color:var(--muted);text-decoration:none;padding:.15rem .2rem}
+.topbar__lang a.is-active{color:var(--ink);font-weight:650}
+.topbar__lang-sep{color:var(--stone);font-size:.75rem;user-select:none}
+.main{width:min(100% - 2rem,var(--max));margin:2.25rem auto 3rem}
+.page-head{margin-bottom:1.35rem}
+.page-head h1{
+  margin:0 0 .4rem;font-family:var(--display);font-weight:600;font-size:clamp(1.55rem,3vw,1.85rem);
+  letter-spacing:-.02em;line-height:1.2;color:var(--ink);
+}
+.lede{margin:0;color:var(--ink-soft);font-size:1.02rem;line-height:1.55}
+.card{
+  background:var(--white);border:1px solid var(--stone);border-radius:var(--radius);
+  padding:1.35rem 1.35rem 1.4rem;box-shadow:var(--shadow);
+}
+.idp-list{display:grid;gap:.7rem}
+.idp-btn{
+  display:flex;flex-direction:row;align-items:center;justify-content:center;gap:.65rem;
+  width:100%;padding:.95rem 1.15rem;border:1px solid var(--stone);border-radius:var(--radius-sm);
+  background:var(--cream);font:inherit;font-weight:600;font-size:.98rem;color:var(--ink);
+  text-decoration:none;transition:border-color .15s,background .15s,box-shadow .15s;
+}
+.idp-btn__icon{display:inline-flex;width:20px;height:20px;flex-shrink:0}
+.idp-btn__icon svg{display:block;width:20px;height:20px}
+.idp-btn__label{line-height:1.2}
+.idp-btn:hover{
+  border-color:var(--sage);background:var(--sage-soft);box-shadow:var(--shadow);
+  color:var(--ink);text-decoration:none;
+}
+.oauth-tip{margin:.9rem 0 0;font-size:.84rem;color:var(--muted);text-align:center;line-height:1.45}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <span class="topbar__brand">
+    <span class="topbar__mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="11" width="18" height="10" rx="2" stroke="currentColor" stroke-width="1.75"/><path d="M7 11V8a5 5 0 0 1 10 0v3" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/><circle cx="12" cy="16" r="1.5" fill="currentColor"/></svg>
+    </span>
+    Secure Publish
+  </span>
+  <nav class="topbar__lang" aria-label="${escapeHtml(copy.langLabel)}">
+    <a href="${langQs("en")}" class="${en ? "is-active" : ""}">EN</a>
+    <span class="topbar__lang-sep" aria-hidden="true">|</span>
+    <a href="${langQs("pt")}" class="${en ? "" : "is-active"}">PT</a>
+  </nav>
+</header>
+<main class="main">
+  <div class="page-head">
+    <h1>${escapeHtml(copy.title)}</h1>
+    <p class="lede">${escapeHtml(copy.lede)}</p>
+  </div>
+  <div class="card">
+    <div class="idp-list">${links.join("")}</div>
+    <p class="oauth-tip">${escapeHtml(copy.tip)}</p>
+  </div>
+</main>
+</body>
+</html>`;
   return new Response(html, {
     status: 200,
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
   });
 }
+
 
 function labelProvider(name) {
   if (name === "google") return "Google";
