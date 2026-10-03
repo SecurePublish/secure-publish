@@ -7,6 +7,9 @@
     "packages/cli",
     "packages/edge"
   ],
+  "bin": {
+    "secure-publish": "./packages/cli/bin/secure-publish.js"
+  },
   "scripts": {
     "deploy": "npm run deploy -w @secure-publish/edge",
     "dev:edge": "npm run dev -w @secure-publish/edge",
@@ -14,7 +17,8 @@
     "sp": "node packages/cli/bin/secure-publish.js",
     "doctor": "node packages/cli/bin/secure-publish.js doctor",
     "list": "node packages/cli/bin/secure-publish.js list",
-    "e2e:mock": "node scripts/e2e-mock.mjs"
+    "e2e:mock": "node scripts/e2e-mock.mjs",
+    "test:cli-bin": "node --test test/github-npx-bin.test.mjs"
   },
   "engines": {
     "node": ">=20"
