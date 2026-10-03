@@ -39,7 +39,7 @@ Usage:
   secure-publish mock-serve [--port 8787]
   secure-publish help
 
-Sign in with Google via \`login\`. Publish uses that account.
+Sign in with Google, GitHub, or Microsoft via \`login\` (whichever is configured). Publish uses that account.
 Do not set CLOUDFLARE_API_TOKEN for publish.
 
 Operator only (\`--operator\` or SECURE_PUBLISH_OPERATOR=1) still writes KV directly:

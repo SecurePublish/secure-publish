@@ -104,4 +104,4 @@ npm run e2e:mock
 
 - Dedicated `api.securepublish.work` (optional; not required — `/api` already on wildcard Worker)
 - Migrate cookie to SameSite=Lax when console API stays on `*.securepublish.work`
-- GitHub / Microsoft OAuth apps (V1 = **Google only**)
+- Paste GitHub / Microsoft OAuth secrets when Clovis creates the apps (Worker already fail-closed until both CLIENT_ID + CLIENT_SECRET are set)

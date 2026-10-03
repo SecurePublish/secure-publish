@@ -42,7 +42,7 @@ Token: present in env (not logged)
 6) still pending (John / DNS)
    - Worker custom domain / route: *.securepublish.work (NS active; attach route)
    - Pretty URLs https://{slug}.securepublish.work/{id}
-   - GitHub / Microsoft OAuth apps (Google live)
+   - GitHub / Microsoft OAuth apps (Worker routes ready; paste secrets when apps exist)
    See docs/DEPLOY-WILDCARD.md
 
 PASS criteria for this run: doctor OK + publish OK + no-cookie denied (302→login / 401 API).

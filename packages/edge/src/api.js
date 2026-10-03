@@ -338,7 +338,7 @@ async function handleDeviceCode(request, env) {
   return json(
     {
       device_code: created.device_code,
-      verification_url: `${origin}/auth/google?device=${created.device_code}`,
+      verification_url: `${origin}/_auth/login?device=${created.device_code}`,
       expires_in: created.expires_in,
       interval: created.interval,
     },

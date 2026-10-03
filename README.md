@@ -146,7 +146,7 @@ export SECURE_PUBLISH_BASE_URL="https://demo.securepublish.work"
 | **Wildcard** (now) | `https://demo.securepublish.work` or `https://{slug}.securepublish.work` | `https://demo.securepublish.work/{panel-id}` |
 | **Fallback** | `https://secure-publish.clovist.workers.dev` | `…workers.dev/{panel-id}` |
 
-Wildcard route `*.securepublish.work/*` → Worker **attached**. Fallback workers.dev still up. Google OAuth works. See [docs/DEPLOY-WILDCARD.md](docs/DEPLOY-WILDCARD.md) and `E2E-WILDCARD.txt`.
+Wildcard route `*.securepublish.work/*` → Worker **attached**. Fallback workers.dev still up. Google / GitHub / Microsoft OAuth (per configured secrets). See [docs/DEPLOY-WILDCARD.md](docs/DEPLOY-WILDCARD.md) and `E2E-WILDCARD.txt`.
 
 ### 2. Instalar
 
@@ -194,12 +194,16 @@ cd packages/edge
 npx wrangler secret put SESSION_SECRET
 npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET
-# opcional GITHUB_* MICROSOFT_*
-npx wrangler secret put OAUTH_ALLOWED_DOMAINS   # ex: empresa.com
+npx wrangler secret put GITHUB_CLIENT_ID      # optional until Clovis pastes
+npx wrangler secret put GITHUB_CLIENT_SECRET
+npx wrangler secret put MICROSOFT_CLIENT_ID  # optional until Clovis pastes
+npx wrangler secret put MICROSOFT_CLIENT_SECRET
+# vars: OAUTH_ALLOWED_DOMAINS=empresa.com (email domain allowlist — not IdP org membership)
 ```
 
 Não defina `TEAM_DOMAIN`/`POLICY_AUD` se quiser modo `oauth` puro (Access tem prioridade).
 
+A provider without both CLIENT_ID and CLIENT_SECRET is absent (no button; `/auth/{provider}` → 503). Google keeps working alone.
 
 ## Console API (Worker)
 

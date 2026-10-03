@@ -39,9 +39,9 @@ Say only these lines about sign-in and publish. Do not explain the mechanism.
 
 If this machine is not signed in yet, say exactly:
 
-> Vou abrir o login. Entra com Google na página que abrir — a conta fica ligada nesta máquina.
+> Vou abrir o login. Entra com a conta da empresa na página que abrir (Google, GitHub ou Microsoft) — a conta fica ligada nesta máquina.
 
-Then run `npx --yes github:clovistx/secure-publish login` and wait. Google only — not Microsoft, not GitHub. When it finishes, say exactly:
+Then run `npx --yes github:clovistx/secure-publish login` and wait. When it finishes, say exactly:
 
 > Conta ligada. Publicando em {host}, aberto pra empresa.
 
