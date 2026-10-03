@@ -51,7 +51,7 @@ Then: *Publique este dashboard HTML com Secure Publish.*
 ## Arquitetura
 
 ```text
-CLI (secure-publish publish [--to])
+CLI (securepublish-cli publish [--to])
         │  Cloudflare REST API (KV PUT)   or --mock local store
         ▼
    KV namespace "PANELS"   panel-id → { html, access }
@@ -90,16 +90,22 @@ Metadata `mode` pode ser `company` ou `org`. Os dois significam **domínio**, n�
 
 ## CLI
 
+Command name: **`securepublish-cli`**. Do **not** `npm install secure-publish` or `npx secure-publish` (unrelated public package). From this repo:
+
+```bash
+npx --yes github:clovistx/secure-publish
+```
+
 ```bash
 # default: toda a empresa = mesmo domínio de e-mail do tenant
-secure-publish publish examples/panel-vendas.html --title "Painel Vendas Q3"
+securepublish-cli publish examples/panel-vendas.html --title "Painel Vendas Q3"
 
 # restringir
-secure-publish publish examples/panel-ops.html --to ana@empresa.com,bia@empresa.com
+securepublish-cli publish examples/panel-ops.html --to ana@empresa.com,bia@empresa.com
 
-secure-publish list
-secure-publish revoke <key>
-secure-publish doctor
+securepublish-cli list
+securepublish-cli revoke <key>
+securepublish-cli doctor
 ```
 
 Mensagens (PT):
@@ -114,8 +120,8 @@ Mensagens (PT):
 ```bash
 export SECURE_PUBLISH_MOCK=1
 export SECURE_PUBLISH_COMPANY_DOMAINS=empresa.com
-node packages/cli/bin/secure-publish.js publish examples/panel-vendas.html --title "Painel Vendas Q3"
-node packages/cli/bin/secure-publish.js mock-serve --port 8787
+node packages/cli/bin/securepublish-cli.js publish examples/panel-vendas.html --title "Painel Vendas Q3"
+node packages/cli/bin/securepublish-cli.js mock-serve --port 8787
 ```
 
 O header `X-Mock-User: ana@empresa.com` **simula** sessão SSO. Não é login de verdade. Nunca ligue mock em produção.
@@ -152,7 +158,7 @@ Wildcard route `*.securepublish.work/*` → Worker **attached**. Fallback worker
 
 ```bash
 npm install
-node packages/cli/bin/secure-publish.js doctor
+node packages/cli/bin/securepublish-cli.js doctor
 ```
 
 Config opcional: `.secure-publish.json` (veja `.secure-publish.json.example`).
@@ -223,7 +229,7 @@ cd packages/edge && npm test && npx wrangler dev
 ## Layout
 
 ```text
-packages/cli     secure-publish CLI (publish, list, revoke, doctor, mock-serve)
+packages/cli     securepublish-cli (publish, list, revoke, doctor, mock-serve)
 packages/edge    Worker (SSO + domain/--to ACL)
 skills/secure-publish/SKILL.md
 examples/        panel-vendas.html, panel-ops.html

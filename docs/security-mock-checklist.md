@@ -23,5 +23,5 @@ Para README e skill Secure Publish. Mock ≠ produto.
 ## Onde aplicar
 
 - Landing: disclaimer na demo; trust sem badges de IdP “já vivo” sem OAuth.
-- Skill/README: estes 5 bullets; CLI name `panel-gate` ok em docs avançados.
+- Skill/README: estes 5 bullets; CLI name `securepublish-cli` ok em docs avançados.
 - Produção: nunca `dev-bypass`; secrets só no Worker; falha fechada se SSO não configurado.
