@@ -12,10 +12,16 @@ description: >-
 
 There is no web “publish” button. The console only tracks URLs and views.
 
-Install (already used by the landing):
+Install the skill (already used by the landing):
 
 ```text
 npx skills add https://github.com/clovistx/secure-publish --skill "secure-publish"
+```
+
+Run the CLI from this repo (not the public npm package named `secure-publish` — that is a different project). Do **not** run `npm install -g secure-publish` or `npx secure-publish`. Use only:
+
+```bash
+npx --yes github:clovistx/secure-publish
 ```
 
 User prompts this skill handles:
@@ -35,7 +41,7 @@ If this machine is not signed in yet, say exactly:
 
 > Vou abrir o login. Entra com Google na página que abrir — a conta fica ligada nesta máquina.
 
-Then run `secure-publish login` and wait. Google only — not Microsoft, not GitHub. When it finishes, say exactly:
+Then run `npx --yes github:clovistx/secure-publish login` and wait. Google only — not Microsoft, not GitHub. When it finishes, say exactly:
 
 > Conta ligada. Publicando em {host}, aberto pra empresa.
 
@@ -44,8 +50,8 @@ Use the host the command printed. If there is no host yet, ask where to publish.
 Then publish:
 
 ```bash
-secure-publish publish ./dashboard.html --title "Painel"
-secure-publish publish ./dashboard.html --to clovis@wises.com.br,ana@wises.com.br
+npx --yes github:clovistx/secure-publish publish ./dashboard.html --title "Painel"
+npx --yes github:clovistx/secure-publish publish ./dashboard.html --to clovis@wises.com.br,ana@wises.com.br
 ```
 
 Company-wide means the same email domain as the signed-in account. If they did not say who can see it, ask once:
