@@ -18,6 +18,23 @@ import { approveDeviceCode } from "./kv.js";
 const COOKIE_NAME = "secure_publish_session";
 const SESSION_TTL_SEC = 60 * 60 * 12; // 12h
 
+/** Single production OAuth callback host (GitHub allows one callback URL). */
+const DEFAULT_OAUTH_CALLBACK_ORIGIN = "https://app.securepublish.work";
+
+/**
+ * Canonical origin for IdP redirect_uri. Override with OAUTH_CALLBACK_ORIGIN for local wrangler.
+ * @param {Record<string, string | undefined>} env
+ */
+export function oauthCallbackOrigin(env = {}) {
+  const raw = env.OAUTH_CALLBACK_ORIGIN || DEFAULT_OAUTH_CALLBACK_ORIGIN;
+  return String(raw).replace(/\/$/, "");
+}
+
+/** @param {Record<string, string | undefined>} env @param {string} provider */
+export function oauthRedirectUri(env, provider) {
+  return `${oauthCallbackOrigin(env)}/_auth/callback/${provider}`;
+}
+
 /** @param {Record<string, string | undefined>} env */
 export function ssoMode(env) {
   if (env.SSO_DEV_BYPASS === "1" || env.SSO_DEV_BYPASS === "true") {
@@ -273,8 +290,18 @@ export async function handleAuthRoutes(request, env) {
     return deviceDonePage(url.searchParams.get("retry") !== "1");
   }
 
+  if (url.pathname === "/_auth/resume" || url.pathname === "/_auth/resume/") {
+    return oauthResume(request, env);
+  }
+
   const cb = url.pathname.match(/^\/_auth\/callback\/(google|github|microsoft)\/?$/);
   if (cb) {
+    const canonical = oauthCallbackOrigin(env);
+    if (url.origin !== canonical) {
+      // Code was issued for the canonical redirect_uri — finish there.
+      const home = new URL(url.pathname + url.search, canonical + "/");
+      return Response.redirect(home.toString(), 302);
+    }
     return oauthCallback(request, env, cb[1]);
   }
 
@@ -482,9 +509,20 @@ function oauthStart(url, env, provider) {
     });
   }
   const clientId = env[cfg.idEnv];
-  const returnTo = url.searchParams.get("return_to") || url.searchParams.get("next") || "/";
+  const returnToRaw = url.searchParams.get("return_to") || url.searchParams.get("next") || "/";
   const device = url.searchParams.get("device") || "";
-  const redirectUri = `${url.origin}/_auth/callback/${provider}`;
+  // Keep the host where login began so we can return there after the IdP round trip.
+  const returnTo = absoluteReturnTo(returnToRaw, url.origin);
+  const canonical = oauthCallbackOrigin(env);
+
+  if (url.origin !== canonical) {
+    const bounce = new URL(`/_auth/start/${provider}`, canonical + "/");
+    bounce.searchParams.set("return_to", returnTo);
+    if (/^[a-f0-9]{64}$/.test(device)) bounce.searchParams.set("device", device);
+    return Response.redirect(bounce.toString(), 302);
+  }
+
+  const redirectUri = oauthRedirectUri(env, provider);
   const stateBody = { returnTo, provider, n: crypto.randomUUID() };
   if (/^[a-f0-9]{64}$/.test(device)) stateBody.device = device;
   const state = encodeState(stateBody);
@@ -501,6 +539,24 @@ function oauthStart(url, env, provider) {
   }
 
   return Response.redirect(`${cfg.authUrl}?${params}`, 302);
+}
+
+/**
+ * Turn relative return_to into an absolute URL on the host where login started.
+ * Absolute URLs are kept as-is (validated later by safeReturnTo).
+ */
+function absoluteReturnTo(returnTo, requestOrigin) {
+  if (!returnTo || typeof returnTo !== "string") {
+    return `${requestOrigin}/`;
+  }
+  if (returnTo.startsWith("/") && !returnTo.startsWith("//")) {
+    try {
+      return new URL(returnTo, requestOrigin + "/").toString();
+    } catch {
+      return `${requestOrigin}/`;
+    }
+  }
+  return returnTo;
 }
 
 /**
@@ -532,7 +588,7 @@ async function oauthCallback(request, env, provider) {
 
   const clientId = env[cfg.idEnv];
   const clientSecret = env[cfg.secretEnv];
-  const redirectUri = `${url.origin}/_auth/callback/${provider}`;
+  const redirectUri = oauthRedirectUri(env, provider);
 
   const tokenRes = await fetch(cfg.tokenUrl, {
     method: "POST",
@@ -577,14 +633,14 @@ async function oauthCallback(request, env, provider) {
     }
   }
 
-  const cookie = await mintSessionCookie(
-    { email, provider, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SEC },
-    env.SESSION_SECRET,
-    env,
-    request.url
-  );
+  const sessionPayload = {
+    email,
+    provider,
+    exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SEC,
+  };
+  const cookie = await mintSessionCookie(sessionPayload, env.SESSION_SECRET, env, request.url);
 
-  let location = safeReturnTo(state.returnTo, env);
+  let location;
   if (state.device && /^[a-f0-9]{64}$/.test(state.device)) {
     let linked = false;
     try {
@@ -593,7 +649,11 @@ async function oauthCallback(request, env, provider) {
     } catch {
       linked = false;
     }
-    location = linked ? "/_auth/device/done" : "/_auth/device/done?retry=1";
+    const done = linked ? "/_auth/device/done" : "/_auth/device/done?retry=1";
+    location = `${oauthCallbackOrigin(env)}${done}`;
+  } else {
+    location = safeReturnTo(state.returnTo, env);
+    location = await maybeResumeHandoff(location, sessionPayload, env);
   }
 
   return new Response(null, {
@@ -605,23 +665,167 @@ async function oauthCallback(request, env, provider) {
   });
 }
 
+/**
+ * Domain=.securepublish.work cookie from app.* does not reach workers.dev / localhost.
+ * Hand the session to that host via a one-time /_auth/resume ticket.
+ * @param {string} location
+ * @param {{ email: string, provider: string, exp: number }} sessionPayload
+ * @param {Record<string, string | undefined>} env
+ */
+async function maybeResumeHandoff(location, sessionPayload, env) {
+  let dest;
+  try {
+    dest = new URL(location);
+  } catch {
+    return location;
+  }
+  const canonical = oauthCallbackOrigin(env);
+  if (dest.origin === canonical) return location;
+  const host = dest.hostname.toLowerCase();
+  if (host === "securepublish.work" || host.endsWith(".securepublish.work")) {
+    return location;
+  }
+  if (!env.PANELS?.put) return location;
+
+  const ticket = [...crypto.getRandomValues(new Uint8Array(32))]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  const ttl = 120;
+  await env.PANELS.put(
+    `oauth_resume:${ticket}`,
+    JSON.stringify({
+      email: sessionPayload.email,
+      provider: sessionPayload.provider,
+      exp: sessionPayload.exp,
+      returnTo: location,
+      ticketExp: Math.floor(Date.now() / 1000) + ttl,
+    }),
+    { expirationTtl: ttl }
+  );
+  return `${dest.origin}/_auth/resume?ticket=${ticket}`;
+}
+
+/**
+ * Finish a cross-host handoff: mint cookie for this host, then go to returnTo (same origin).
+ * @param {Request} request
+ * @param {Record<string, string | undefined>} env
+ */
+async function oauthResume(request, env) {
+  const url = new URL(request.url);
+  const ticket = url.searchParams.get("ticket") || "";
+  if (!/^[a-f0-9]{64}$/.test(ticket) || !env.PANELS?.get) {
+    return new Response("Resume inválido.\n", { status: 400 });
+  }
+  const key = `oauth_resume:${ticket}`;
+  const raw = await env.PANELS.get(key);
+  if (!raw) {
+    return new Response("Resume expirado.\n", { status: 400 });
+  }
+  await env.PANELS.delete(key);
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return new Response("Resume inválido.\n", { status: 400 });
+  }
+  if (!payload?.email || !payload.returnTo || (payload.ticketExp || 0) < Math.floor(Date.now() / 1000)) {
+    return new Response("Resume expirado.\n", { status: 400 });
+  }
+  let returnUrl;
+  try {
+    returnUrl = new URL(payload.returnTo);
+  } catch {
+    return new Response("Resume inválido.\n", { status: 400 });
+  }
+  if (returnUrl.origin !== url.origin) {
+    return new Response("Resume origem inválida.\n", { status: 400 });
+  }
+  const cookie = await mintSessionCookie(
+    {
+      email: payload.email,
+      provider: payload.provider || "oauth",
+      exp: payload.exp || Math.floor(Date.now() / 1000) + SESSION_TTL_SEC,
+    },
+    env.SESSION_SECRET,
+    env,
+    request.url
+  );
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: returnUrl.toString(),
+      "set-cookie": cookie,
+    },
+  });
+}
+
+/** Live branded device-done (QA). Was deployed but missing from git — restored from production. */
 function deviceDonePage(ok) {
   const retry = !ok;
   const title = retry ? "Não consegui ligar agora" : "Conta ligada";
   const lede = retry
     ? "Volta e tenta de novo em instantes."
-    : "Pode fechar esta aba.";
+    : "Pode fechar esta aba e voltar pro agente.";
   const html = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>${title}</title>
+<title>${escapeHtml(title)} — Secure Publish</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,550;9..144,600&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --cream:#FAF8F5;--cream-2:#F3EFE9;--stone:#E8E2D9;--ink:#292524;--ink-soft:#57534E;--muted:#78716C;
+  --line:#E7E0D6;--sage:#5F7A61;
+  --display:"Fraunces",Georgia,serif;--sans:"DM Sans",system-ui,sans-serif;
+  --max:540px;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;min-height:100vh;
+  font-family:var(--sans);font-size:1rem;line-height:1.5;color:var(--ink);
+  background:
+    radial-gradient(1200px 600px at 10% -10%,rgba(95,122,97,.08),transparent 55%),
+    var(--cream-2);
+}
+.topbar{
+  display:flex;align-items:center;gap:1rem;
+  padding:.85rem 1.35rem;border-bottom:1px solid var(--line);
+  background:rgba(255,254,252,.94);backdrop-filter:blur(10px);
+}
+.topbar__brand{
+  font-family:var(--display);font-weight:600;font-size:1.12rem;letter-spacing:-.02em;
+  color:var(--ink);display:inline-flex;align-items:center;gap:.45rem;
+}
+.topbar__mark{display:inline-flex;width:1.35rem;height:1.35rem;color:var(--sage);flex-shrink:0}
+.topbar__mark svg{width:100%;height:100%;display:block}
+.main{width:min(100% - 2rem,var(--max));margin:2.25rem auto 3rem}
+.kicker{
+  margin:0 0 .45rem;font-size:.75rem;font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--sage);
+}
+h1{
+  margin:0 0 .4rem;font-family:var(--display);font-weight:600;font-size:clamp(1.55rem,3vw,1.85rem);
+  letter-spacing:-.02em;line-height:1.2;color:var(--ink);
+}
+.lede{margin:0;color:var(--ink-soft);font-size:1.02rem;line-height:1.55}
+</style>
 </head>
-<body style="font-family:Georgia,serif;background:#F3EFE9;color:#292524;margin:0">
-<main style="max-width:32rem;margin:4rem auto;padding:0 1.25rem">
-<h1 style="font-weight:600">${title}</h1>
-<p>${lede}</p>
+<body>
+<header class="topbar">
+  <span class="topbar__brand">
+    <span class="topbar__mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="11" width="18" height="10" rx="2" stroke="currentColor" stroke-width="1.75"/><path d="M7 11V8a5 5 0 0 1 10 0v3" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/><circle cx="12" cy="16" r="1.5" fill="currentColor"/></svg>
+    </span>
+    Secure Publish
+  </span>
+</header>
+<main class="main">
+  <p class="kicker">Secure Publish</p>
+  <h1>${escapeHtml(title)}</h1>
+  <p class="lede">${escapeHtml(lede)}</p>
 </main>
 </body>
 </html>`;
@@ -755,13 +959,29 @@ a{color:var(--sage);font-weight:600}
 }
 
 /**
- * Relative paths on Worker, or absolute URLs only if origin ∈ CONSOLE_ORIGIN.
+ * Relative paths → console origin. Absolute URLs only if origin is allowlisted
+ * (CONSOLE_ORIGIN, *.securepublish.work, *.workers.dev, localhost).
  */
+function isAllowedReturnOrigin(origin, env) {
+  if (consoleOrigins(env).includes(origin)) return true;
+  try {
+    const u = new URL(origin);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    const h = u.hostname.toLowerCase();
+    if (h === "securepublish.work" || h.endsWith(".securepublish.work")) return true;
+    if (h.endsWith(".workers.dev")) return true;
+    if (h === "localhost" || h === "127.0.0.1") return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 function safeReturnTo(path, env) {
-  if (!path || typeof path !== "string") return "/";
-  const allowed = consoleOrigins(env);
-  // Relative paths belong to the console (Pages), not panel ids on the Worker.
+  const fallback = `${oauthCallbackOrigin(env)}/`;
+  if (!path || typeof path !== "string") return fallback;
   if (path.startsWith("/") && !path.startsWith("//")) {
+    const allowed = consoleOrigins(env);
     if (allowed.length) {
       try {
         return new URL(path, allowed[0] + "/").toString();
@@ -773,11 +993,11 @@ function safeReturnTo(path, env) {
   }
   try {
     const u = new URL(path);
-    if (allowed.includes(u.origin)) return u.toString();
+    if (isAllowedReturnOrigin(u.origin, env)) return u.toString();
   } catch {
     /* ignore */
   }
-  return allowed.length ? allowed[0] + "/" : "/";
+  return fallback;
 }
 
 

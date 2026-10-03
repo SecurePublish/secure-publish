@@ -72,7 +72,7 @@ npx wrangler deploy
 
 ## Gaps (John / ops)
 
-- OAuth client IDs/secrets + redirect URIs (`/_auth/callback/{provider}`).
+- OAuth client IDs/secrets + redirect URIs (`https://app.securepublish.work/_auth/callback/{provider}` only).
 - DNS: `*.securepublish.work` → Worker; custom domain: TXT `_secure-publish.{host}=sp-verify=<email>` then `POST /api/hosting/custom/verify`; CNAME de tráfego (`cname.securepublish.work`) TBD (John/CF).
 - Email provider for `sendInvite`.
 - Cloudflare Access (`TEAM_DOMAIN` + `POLICY_AUD`) if preferred over Worker OAuth.

@@ -45,7 +45,10 @@ async function issuePublishToken(panels) {
   assert.equal(started.status, 200);
   const start = await started.json();
   assert.match(start.device_code, /^[a-f0-9]{64}$/);
-  assert.match(start.verification_url, /\/_auth\/login\?device=[a-f0-9]{64}$/);
+  assert.match(
+    start.verification_url,
+    /^https:\/\/app\.securepublish\.work\/_auth\/login\?device=[a-f0-9]{64}$/
+  );
 
   const pending = await worker.fetch(
     new Request("https://worker.test/api/device/token", {

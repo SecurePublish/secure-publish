@@ -183,11 +183,13 @@ Até o SSO estar ligado, modo `none` responde 403 de propósito.
 
 ### Opção B — OAuth no Worker
 
-Redirects:
+Redirects (single production callback host — GitHub allows one URL):
 
-- `https://<host>/_auth/callback/google`
-- `https://<host>/_auth/callback/github`
-- `https://<host>/_auth/callback/microsoft`
+- `https://app.securepublish.work/_auth/callback/google`
+- `https://app.securepublish.work/_auth/callback/github`
+- `https://app.securepublish.work/_auth/callback/microsoft`
+
+Login may start on a tenant host or workers.dev; the Worker bounces to `app.securepublish.work` for the IdP round trip, then returns the user to the original host. Do not register demo/tenant callbacks.
 
 ```bash
 cd packages/edge

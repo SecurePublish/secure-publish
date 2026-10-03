@@ -84,7 +84,7 @@ describe("isProviderConfigured", () => {
 });
 
 describe("OAuth start fail-closed when provider unconfigured", () => {
-  it("GET /auth/github → 503 when secrets missing; Google still starts", async () => {
+  it("GET /auth/github → 503 when secrets missing; Google still starts (via app bounce)", async () => {
     const env = { ...baseOauth, PANELS: memoryKv() };
     const gh = await worker.fetch(
       new Request("https://demo.securepublish.work/auth/github?next=/signup/", {
@@ -102,7 +102,10 @@ describe("OAuth start fail-closed when provider unconfigured", () => {
       env
     );
     assert.equal(google.status, 302);
-    assert.match(google.headers.get("location"), /accounts\.google\.com/);
+    assert.match(
+      google.headers.get("location"),
+      /^https:\/\/app\.securepublish\.work\/_auth\/start\/google/
+    );
   });
 
   it("GET /auth/microsoft → 503 when only client id is set (secret missing)", async () => {
@@ -120,7 +123,7 @@ describe("OAuth start fail-closed when provider unconfigured", () => {
     assert.equal(res.status, 503);
   });
 
-  it("GET /_auth/start/github redirects when both secrets present", async () => {
+  it("GET /_auth/start/github on tenant host bounces to app.securepublish.work", async () => {
     const env = {
       ...baseOauth,
       PANELS: memoryKv(),
@@ -128,7 +131,30 @@ describe("OAuth start fail-closed when provider unconfigured", () => {
       GITHUB_CLIENT_SECRET: "gh-secret",
     };
     const res = await worker.fetch(
-      new Request("https://demo.securepublish.work/_auth/start/github", {
+      new Request(
+        "https://wise.securepublish.work/_auth/start/github?return_to=%2Fabc123&device=" +
+          "a".repeat(64),
+        { redirect: "manual" }
+      ),
+      env
+    );
+    assert.equal(res.status, 302);
+    const loc = new URL(res.headers.get("location"));
+    assert.equal(loc.origin, "https://app.securepublish.work");
+    assert.equal(loc.pathname, "/_auth/start/github");
+    assert.equal(loc.searchParams.get("return_to"), "https://wise.securepublish.work/abc123");
+    assert.equal(loc.searchParams.get("device"), "a".repeat(64));
+  });
+
+  it("GET /_auth/start/github on app uses pinned redirect_uri (not request origin)", async () => {
+    const env = {
+      ...baseOauth,
+      PANELS: memoryKv(),
+      GITHUB_CLIENT_ID: "gh-id",
+      GITHUB_CLIENT_SECRET: "gh-secret",
+    };
+    const res = await worker.fetch(
+      new Request("https://app.securepublish.work/_auth/start/github?return_to=/", {
         redirect: "manual",
       }),
       env
@@ -137,6 +163,10 @@ describe("OAuth start fail-closed when provider unconfigured", () => {
     const loc = res.headers.get("location");
     assert.match(loc, /github\.com\/login\/oauth\/authorize/);
     assert.match(loc, /client_id=gh-id/);
+    assert.match(
+      loc,
+      /redirect_uri=https%3A%2F%2Fapp\.securepublish\.work%2F_auth%2Fcallback%2Fgithub/
+    );
     assert.match(loc, /scope=.*user%3Aemail|user:email/);
   });
 
@@ -148,7 +178,7 @@ describe("OAuth start fail-closed when provider unconfigured", () => {
       MICROSOFT_CLIENT_SECRET: "ms-secret",
     };
     const res = await worker.fetch(
-      new Request("https://demo.securepublish.work/auth/microsoft", {
+      new Request("https://app.securepublish.work/auth/microsoft", {
         redirect: "manual",
       }),
       env
@@ -156,7 +186,25 @@ describe("OAuth start fail-closed when provider unconfigured", () => {
     assert.equal(res.status, 302);
     const loc = res.headers.get("location");
     assert.match(loc, /login\.microsoftonline\.com\/common\//);
+    assert.match(
+      loc,
+      /redirect_uri=https%3A%2F%2Fapp\.securepublish\.work%2F_auth%2Fcallback%2Fmicrosoft/
+    );
     assert.doesNotMatch(loc, /access_type=/);
+  });
+
+  it("Google start also pins redirect_uri to app.securepublish.work", async () => {
+    const env = { ...baseOauth, PANELS: memoryKv() };
+    const res = await worker.fetch(
+      new Request("https://demo.securepublish.work/auth/google?next=/signup/", {
+        redirect: "manual",
+      }),
+      env
+    );
+    assert.equal(res.status, 302);
+    const bounce = new URL(res.headers.get("location"));
+    assert.equal(bounce.origin, "https://app.securepublish.work");
+    assert.equal(bounce.pathname, "/_auth/start/google");
   });
 });
 
@@ -351,7 +399,7 @@ describe("OAuth callback — clear page on missing verified email; same cookie",
     };
     const res = await worker.fetch(
       new Request(
-        `https://demo.securepublish.work/_auth/callback/github?code=abc&state=${state}`,
+        `https://app.securepublish.work/_auth/callback/github?code=abc&state=${state}`,
         { redirect: "manual" }
       ),
       env
@@ -453,7 +501,7 @@ describe("Company access = email domain after SSO (not GitHub org)", () => {
 });
 
 describe("Device-code login opens provider picker (not Google-only)", () => {
-  it("verification_url points at /_auth/login?device=…", async () => {
+  it("verification_url points at app.securepublish.work/_auth/login?device=…", async () => {
     const env = { ...baseOauth, PANELS: memoryKv() };
     const res = await worker.fetch(
       new Request("https://demo.securepublish.work/api/device/code", { method: "POST" }),
@@ -462,10 +510,26 @@ describe("Device-code login opens provider picker (not Google-only)", () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.match(body.device_code, /^[a-f0-9]{64}$/);
-    assert.match(
+    assert.equal(
       body.verification_url,
-      /\/_auth\/login\?device=[a-f0-9]{64}$/
+      `https://app.securepublish.work/_auth/login?device=${body.device_code}`
     );
-    assert.doesNotMatch(body.verification_url, /\/auth\/google/);
+  });
+});
+
+describe("Branded /_auth/device/done (live QA markup)", () => {
+  it("keeps lock mark, Secure Publish kicker, and voltar pro agente", async () => {
+    const env = { ...baseOauth, PANELS: memoryKv() };
+    const res = await worker.fetch(
+      new Request("https://app.securepublish.work/_auth/device/done"),
+      env
+    );
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /topbar__mark/);
+    assert.match(html, /class="kicker">Secure Publish</);
+    assert.match(html, /Conta ligada/);
+    assert.match(html, /Pode fechar esta aba e voltar pro agente\./);
+    assert.doesNotMatch(html, /Pode fechar esta aba\.<\/p>/);
   });
 });

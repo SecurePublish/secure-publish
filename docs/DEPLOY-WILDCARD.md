@@ -38,7 +38,7 @@ cd packages/edge
 npx wrangler deploy   # picks up [vars] from wrangler.toml
 ```
 
-OAuth callbacks stay on the **Worker** host: `/_auth/callback/{provider}` (Google on workers.dev and on `*.securepublish.work` if redirect URIs include both).
+OAuth callbacks are pinned to **`https://app.securepublish.work/_auth/callback/{provider}`** (one URL per IdP). Starts on other hosts bounce to `app.` for the round trip.
 
 ### `SP_API_BASE` (Cameron / console)
 
