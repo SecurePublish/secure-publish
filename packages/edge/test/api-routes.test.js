@@ -102,6 +102,9 @@ describe("API routes — Marcus checklist", () => {
     assert.ok("host" in body);
     // No subdomain claimed yet — must be null, never "" (console would show https:///{id})
     assert.equal(body.host, null);
+    assert.equal(body.customHostname, null);
+    assert.equal(body.customVerified, false);
+    assert.equal(body.verify, undefined);
     assert.equal(res.headers.get("Access-Control-Allow-Origin"), "https://console.pages.dev");
     assert.equal(res.headers.get("Access-Control-Allow-Credentials"), "true");
   });
@@ -120,11 +123,42 @@ describe("API routes — Marcus checklist", () => {
     assert.equal(body.host, null); // no hosting yet — do not fabricate https:///
     const p = body.panels.find((x) => x.id === PANEL_ID);
     assert.ok(p);
+    assert.equal(p.title, "Mine");
     assert.equal(p.publisherEmail, "dev@localhost");
     assert.equal(p.mode, "company");
     assert.ok(Array.isArray(p.allowlist));
     assert.ok(Array.isArray(p.viewers));
     assert.equal(typeof p.views, "number");
+  });
+
+  it("GET /api/panels title falls back to untitled when missing", async () => {
+    const id = "cccccccccccccccccccccccc";
+    await env.PANELS.put(
+      id,
+      JSON.stringify({
+        v: 1,
+        publishedAt: "2026-10-03T00:00:00Z",
+        publisherEmail: "dev@localhost",
+        access: { mode: "company", domains: ["localhost"] },
+        html: "<html>no title</html>",
+      })
+    );
+    const raw = await env.PANELS.get("idx:pub:dev@localhost");
+    const ids = JSON.parse(raw || "[]");
+    if (!ids.includes(id)) {
+      ids.push(id);
+      await env.PANELS.put("idx:pub:dev@localhost", JSON.stringify(ids));
+    }
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/panels?scope=mine", {
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      env
+    );
+    const body = await res.json();
+    const p = body.panels.find((x) => x.id === id);
+    assert.ok(p);
+    assert.equal(p.title, "untitled");
   });
 
   it("(2) PATCH access forbidden for non-publisher", async () => {
@@ -225,7 +259,7 @@ describe("API routes — Marcus checklist", () => {
     assert.notEqual(body.host, "");
   });
 
-  it("(5) PUT /api/hosting/custom claims but does not verify", async () => {
+  it("(5) PUT /api/hosting/custom claims but does not verify (opaque TXT token)", async () => {
     const res = await worker.fetch(
       new Request("https://worker.test/api/hosting/custom", {
         method: "PUT",
@@ -241,6 +275,28 @@ describe("API routes — Marcus checklist", () => {
     const body = await res.json();
     assert.equal(body.customVerified, false);
     assert.ok(body.verify);
+    assert.equal(body.verify.type, "txt");
+    assert.equal(body.verify.name, "_secure-publish.dash.acme.example");
+    assert.match(body.verify.value, /^sp-verify=[0-9a-f]{64}$/);
+    assert.ok(!body.verify.value.includes("dev@localhost"), "must not publish owner email in DNS");
+  });
+
+  it("GET /api/me returns pending custom-domain verify object", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/me", {
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      env
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.customHostname, "dash.acme.example");
+    assert.equal(body.customVerified, false);
+    assert.equal(body.host, "wise.securepublish.work"); // serving host unchanged
+    assert.ok(body.verify);
+    assert.equal(body.verify.type, "txt");
+    assert.equal(body.verify.name, "_secure-publish.dash.acme.example");
+    assert.match(body.verify.value, /^sp-verify=[0-9a-f]{64}$/);
   });
 
   it("(3) CORS preflight rejects unknown origin", async () => {
@@ -275,6 +331,15 @@ describe("API routes — Marcus checklist", () => {
   });
 
   it("POST /api/hosting/custom/verify txt_not_found → 422, stays unverified", async () => {
+    const me = await (
+      await worker.fetch(
+        new Request("https://worker.test/api/me", {
+          headers: { Origin: "https://console.pages.dev" },
+        }),
+        env
+      )
+    ).json();
+    const expected = me.verify.value;
     const res = await worker.fetch(
       new Request("https://worker.test/api/hosting/custom/verify", {
         method: "POST",
@@ -289,7 +354,8 @@ describe("API routes — Marcus checklist", () => {
     const body = await res.json();
     assert.equal(body.error, "txt_not_found");
     assert.equal(body.verify?.name, "_secure-publish.dash.acme.example");
-    assert.equal(body.verify?.value, "sp-verify=dev@localhost");
+    assert.equal(body.verify?.value, expected);
+    assert.ok(!String(body.verify?.value || "").includes("@"));
   });
 
   it("POST /api/hosting/custom/verify txt_mismatch → 422", async () => {
@@ -302,7 +368,7 @@ describe("API routes — Marcus checklist", () => {
         ...env,
         __lookupTxt: async () => ({
           ok: true,
-          records: ["sp-verify=other@evil.example"],
+          records: ["sp-verify=deadbeef"],
         }),
       }
     );
@@ -337,6 +403,16 @@ describe("API routes — Marcus checklist", () => {
   });
 
   it("POST /api/hosting/custom/verify success → customVerified + host switch + serve OK", async () => {
+    const meBefore = await (
+      await worker.fetch(
+        new Request("https://worker.test/api/me", {
+          headers: { Origin: "https://console.pages.dev" },
+        }),
+        env
+      )
+    ).json();
+    const tokenValue = meBefore.verify.value;
+
     const res = await worker.fetch(
       new Request("https://worker.test/api/hosting/custom/verify", {
         method: "POST",
@@ -346,7 +422,7 @@ describe("API routes — Marcus checklist", () => {
         ...env,
         __lookupTxt: async (name) => {
           assert.equal(name, "_secure-publish.dash.acme.example");
-          return { ok: true, records: ["sp-verify=dev@localhost"] };
+          return { ok: true, records: [tokenValue] };
         },
       }
     );
@@ -365,6 +441,9 @@ describe("API routes — Marcus checklist", () => {
     );
     const meBody = await me.json();
     assert.equal(meBody.host, "dash.acme.example");
+    assert.equal(meBody.customHostname, "dash.acme.example");
+    assert.equal(meBody.customVerified, true);
+    assert.equal(meBody.verify, undefined);
 
     const serve = await worker.fetch(
       new Request(`https://dash.acme.example/${PANEL_ID}`, {
@@ -375,6 +454,150 @@ describe("API routes — Marcus checklist", () => {
     assert.equal(serve.status, 200);
   });
 
+  it("DELETE is listed in CORS Allow-Methods", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/hosting/custom", {
+        method: "OPTIONS",
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      env
+    );
+    assert.equal(res.status, 204);
+    assert.match(res.headers.get("Access-Control-Allow-Methods") || "", /DELETE/);
+  });
+
+  it("DELETE /api/hosting/custom without SSO → 401", async () => {
+    const locked = {
+      PANELS: env.PANELS,
+      CONSOLE_ORIGIN: env.CONSOLE_ORIGIN,
+    };
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/hosting/custom", {
+        method: "DELETE",
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      locked
+    );
+    assert.equal(res.status, 401);
+  });
+
+});
+
+describe("DELETE /api/hosting/custom — pending claim rules", () => {
+  function freshEnv(tenantExtra = {}) {
+    const panels = memoryKv({
+      "tenant:user:dev@localhost": JSON.stringify({
+        email: "dev@localhost",
+        domain: "localhost",
+        slug: "wise",
+        host: "wise.securepublish.work",
+        ...tenantExtra,
+      }),
+      "host:sub:wise": "dev@localhost",
+    });
+    return {
+      PANELS: panels,
+      SSO_DEV_BYPASS: "1",
+      CONSOLE_ORIGIN: "https://console.pages.dev",
+      OAUTH_ALLOWED_DOMAINS: "localhost",
+    };
+  }
+
+  it("clears unverified pending claim; keeps subdomain host", async () => {
+    const env = freshEnv({
+      customHostname: "pending.acme.example",
+      customVerified: false,
+      customVerifyToken: "b".repeat(64),
+    });
+    await env.PANELS.put("host:custom:pending.acme.example", "dev@localhost");
+
+    const del = await worker.fetch(
+      new Request("https://worker.test/api/hosting/custom", {
+        method: "DELETE",
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      env
+    );
+    assert.equal(del.status, 200);
+    assert.deepEqual(await del.json(), { ok: true });
+    assert.equal(await env.PANELS.get("host:custom:pending.acme.example"), null);
+
+    const me = await (
+      await worker.fetch(
+        new Request("https://worker.test/api/me", {
+          headers: { Origin: "https://console.pages.dev" },
+        }),
+        env
+      )
+    ).json();
+    assert.equal(me.customHostname, null);
+    assert.equal(me.customVerified, false);
+    assert.equal(me.verify, undefined);
+    assert.equal(me.host, "wise.securepublish.work");
+  });
+
+  it("404 when none pending", async () => {
+    const env = freshEnv();
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/hosting/custom", {
+        method: "DELETE",
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      env
+    );
+    assert.equal(res.status, 404);
+    assert.equal((await res.json()).error, "no_pending_custom_hostname");
+  });
+
+  it("409 when already verified (must use host-switch, not DELETE)", async () => {
+    const env = freshEnv({
+      customHostname: "dash.acme.example",
+      customVerified: true,
+      host: "dash.acme.example",
+    });
+    await env.PANELS.put("host:custom:dash.acme.example", "dev@localhost");
+
+    const res = await worker.fetch(
+      new Request("https://worker.test/api/hosting/custom", {
+        method: "DELETE",
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      env
+    );
+    assert.equal(res.status, 409);
+    assert.equal((await res.json()).error, "custom_already_verified");
+    assert.equal(await env.PANELS.get("host:custom:dash.acme.example"), "dev@localhost");
+  });
+
+  it("owner-only: session cannot clear another tenant's pending lock", async () => {
+    const env = freshEnv({
+      customHostname: "mine.acme.example",
+      customVerified: false,
+      customVerifyToken: "c".repeat(64),
+    });
+    await env.PANELS.put("host:custom:mine.acme.example", "dev@localhost");
+    await env.PANELS.put("host:custom:other.acme.example", "other@acme.example");
+    await env.PANELS.put(
+      "tenant:user:other@acme.example",
+      JSON.stringify({
+        email: "other@acme.example",
+        customHostname: "other.acme.example",
+        customVerified: false,
+        customVerifyToken: "d".repeat(64),
+      })
+    );
+
+    const del = await worker.fetch(
+      new Request("https://worker.test/api/hosting/custom", {
+        method: "DELETE",
+        headers: { Origin: "https://console.pages.dev" },
+      }),
+      env
+    );
+    assert.equal(del.status, 200);
+    assert.equal(await env.PANELS.get("host:custom:mine.acme.example"), null);
+    assert.equal(await env.PANELS.get("host:custom:other.acme.example"), "other@acme.example");
+  });
 });
 
 describe("GET|POST /auth/logout", () => {

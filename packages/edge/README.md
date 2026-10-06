@@ -9,15 +9,16 @@ Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)
 
 | Method | Path | Notes |
 |--------|------|--------|
-| GET | `/api/me` | `{ email, idp, domain, host }` — SSO required |
-| GET | `/api/panels?scope=mine\|company` | `{ host, panels: […] }` — SSO; `viewers[]` only after auth |
+| GET | `/api/me` | `{ email, idp, domain, host, customHostname, customVerified }` (+ `verify` when pending) — SSO required |
+| GET | `/api/panels?scope=mine\|company` | `{ host, panels: [{ id, title, … }] }` — SSO; `title` fallback `"untitled"`; `viewers[]` only after auth |
 | PATCH | `/api/panels/:id/access` | `{ mode, allowlist[], sendInvite? }` — **publisher only** |
 | PUT | `/api/hosting/subdomain` | `{ slug }` → `{ host }` |
-| PUT | `/api/hosting/custom` | `{ hostname }` → claim; **not served until verified** |
-| POST | `/api/hosting/custom/verify` | DoH TXT `_secure-publish.<host>` = `sp-verify=<email>` → `customVerified` + switch `host` |
-| GET | `/auth/{google\|microsoft\|github}` | OAuth start (`?next=` → return) |
+| PUT | `/api/hosting/custom` | `{ hostname }` → claim; TXT `sp-verify=<opaque-token>`; **not served until verified** |
+| DELETE | `/api/hosting/custom` | clear **unverified** pending claim only (`404` / `409` if none / verified) |
+| POST | `/api/hosting/custom/verify` | DoH TXT `_secure-publish.<host>` = stored opaque token → `customVerified` + switch `host` |
+| GET | `/auth/{google\|microsoft\|github}` | OAuth start (`?next=` → return); callback pinned to `app.securepublish.work` |
 | GET\|POST | `/auth/logout` | Clear `secure_publish_session` with **same** Path/SameSite/Secure/Domain as login → 302 first `CONSOLE_ORIGIN` + `/signup/` (idempotent; ignores `?next=`; `cache-control: no-store`) |
-| GET | `/:panelId` | HTML after SSO + ACL (Lock A) |
+| GET | `/:panelId` | HTML after SSO + ACL (Lock A). Session cookie `Domain=.securepublish.work` from console login is accepted on panel hosts. |
 
 ### Marcus checklist
 
@@ -72,6 +73,6 @@ npx wrangler deploy
 ## Gaps (John / ops)
 
 - OAuth client IDs/secrets + redirect URIs (`/_auth/callback/{provider}`).
-- DNS: `*.securepublish.work` → Worker; custom domain: TXT `_secure-publish.{host}=sp-verify=<email>` then `POST /api/hosting/custom/verify`; CNAME de tráfego (`cname.securepublish.work`) TBD (John/CF).
+- DNS: `*.securepublish.work` → Worker; custom domain: TXT `_secure-publish.{host}=sp-verify=<opaque-token>` then `POST /api/hosting/custom/verify`; CNAME de tráfego (`cname.securepublish.work`) TBD (John/CF). Legacy email-in-TXT claims need re-claim.
 - Email provider for `sendInvite`.
 - Cloudflare Access (`TEAM_DOMAIN` + `POLICY_AUD`) if preferred over Worker OAuth.

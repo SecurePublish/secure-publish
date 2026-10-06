@@ -13,7 +13,7 @@ Cookie: `secure_publish_session`.
 3. **CONSOLE_ORIGIN completo:** `https://app.securepublish.work`, `https://secure-publish-app.pages.dev`, local `http://127.0.0.1:8765` se pairing. Sem trailing slash / sem wildcard `*`.
 4. **`next` / return_to:** só URLs cujo origin ∈ `CONSOLE_ORIGIN` (ou remap `/app/*` → console). Bloquear open redirect.
 5. **Sem `Domain=` no cookie** enquanto API estiver em `workers.dev` e console em `securepublish.work` — hosts diferentes; o cookie fica no host do Worker e o browser envia nos fetches cross-site via SameSite=None.
-6. **Quando Worker for `*.securepublish.work`:** preferir API no mesmo site-eTLD+1 (`api.securepublish.work` ou path no app) e aí dá pra migrar pra **SameSite=Lax** + cookie `Domain=.securepublish.work` (melhor). Até lá, None é o correto.
+6. **Quando Worker for `*.securepublish.work`:** preferir API no mesmo site-eTLD+1 (`app.securepublish.work/api` ou path no app) com **SameSite=Lax** + cookie `Domain=.securepublish.work`. OAuth callback is pinned to `app.securepublish.work` so panel hosts (`*.securepublish.work`) receive the same session cookie — no second Google login (“Entrar para ver”).
 7. **Terceiros / ITP:** Safari pode restringir cookies cross-site. Testar Safari + Chrome após login. Mitigação longa = same-site (item 6).
 8. **Logout:** clear cookie com mesmos atributos (SameSite/Secure/Path).
 9. **Não logar** valor do cookie em shots/logs; não colocar token em `localStorage` como substituto da sessão HttpOnly.

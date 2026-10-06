@@ -18,6 +18,24 @@ import { approveDeviceCode } from "./kv.js";
 const COOKIE_NAME = "secure_publish_session";
 const SESSION_TTL_SEC = 60 * 60 * 12; // 12h
 
+/** Single production OAuth callback host (Google allows one primary redirect URI). */
+const DEFAULT_OAUTH_CALLBACK_ORIGIN = "https://app.securepublish.work";
+
+/**
+ * Canonical origin for IdP redirect_uri + Domain-scoped session mint.
+ * Override with OAUTH_CALLBACK_ORIGIN for local wrangler.
+ * @param {Record<string, string | undefined>} env
+ */
+export function oauthCallbackOrigin(env = {}) {
+  const raw = env.OAUTH_CALLBACK_ORIGIN || DEFAULT_OAUTH_CALLBACK_ORIGIN;
+  return String(raw).replace(/\/$/, "");
+}
+
+/** @param {Record<string, string | undefined>} env @param {string} provider */
+export function oauthRedirectUri(env, provider) {
+  return `${oauthCallbackOrigin(env)}/_auth/callback/${provider}`;
+}
+
 /** @param {Record<string, string | undefined>} env */
 export function ssoMode(env) {
   if (env.SSO_DEV_BYPASS === "1" || env.SSO_DEV_BYPASS === "true") {
@@ -451,7 +469,10 @@ function oauthStart(url, env, provider) {
   }
   const returnTo = url.searchParams.get("return_to") || url.searchParams.get("next") || "/";
   const device = url.searchParams.get("device") || "";
-  const redirectUri = `${url.origin}/_auth/callback/${provider}`;
+  // Always use the canonical callback host so Set-Cookie can set
+  // Domain=.securepublish.work (panel hosts share that cookie). Starting OAuth
+  // on wise.* or workers.dev must not mint a host-only cookie on that host.
+  const redirectUri = oauthRedirectUri(env, provider);
   const stateBody = { returnTo, provider, n: crypto.randomUUID() };
   if (/^[a-f0-9]{64}$/.test(device)) stateBody.device = device;
   const state = encodeState(stateBody);
@@ -465,6 +486,19 @@ function oauthStart(url, env, provider) {
   });
   if (provider === "google" || provider === "microsoft") {
     params.set("access_type", "online");
+  }
+
+  // If the user started OAuth on a non-canonical host, bounce through the
+  // canonical origin so the callback response can mint Domain=.securepublish.work.
+  const canonical = oauthCallbackOrigin(env);
+  if (url.origin !== canonical && !env.OAUTH_CALLBACK_ORIGIN) {
+    const startPath = url.pathname.startsWith("/auth/")
+      ? `/auth/${provider}`
+      : `/_auth/start/${provider}`;
+    const bounce = new URL(startPath, canonical + "/");
+    bounce.searchParams.set("return_to", returnTo);
+    if (stateBody.device) bounce.searchParams.set("device", stateBody.device);
+    return Response.redirect(bounce.toString(), 302);
   }
 
   return Response.redirect(`${cfg.authUrl}?${params}`, 302);
@@ -493,7 +527,7 @@ async function oauthCallback(request, env, provider) {
 
   const clientId = env[cfg.idEnv];
   const clientSecret = env[cfg.secretEnv];
-  const redirectUri = `${url.origin}/_auth/callback/${provider}`;
+  const redirectUri = oauthRedirectUri(env, provider);
 
   const tokenRes = await fetch(cfg.tokenUrl, {
     method: "POST",
@@ -537,11 +571,14 @@ async function oauthCallback(request, env, provider) {
     }
   }
 
+  // Mint against the canonical callback URL so cookieAttrs always applies
+  // Domain=.securepublish.work (panel hosts *.securepublish.work share it).
+  const mintUrl = `${oauthCallbackOrigin(env)}/_auth/callback/${provider}`;
   const cookie = await mintSessionCookie(
     { email, provider, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SEC },
     env.SESSION_SECRET,
     env,
-    request.url
+    mintUrl
   );
 
   let location = safeReturnTo(state.returnTo, env);
@@ -556,12 +593,22 @@ async function oauthCallback(request, env, provider) {
     location = linked ? "/_auth/device/done" : "/_auth/device/done?retry=1";
   }
 
+  const headers = new Headers({ location });
+  // Kill host-only zombies on app.* so the Domain-scoped cookie is authoritative
+  // for both console API and panel hosts (see readSessionCookie multi-value).
+  headers.append(
+    "set-cookie",
+    `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`
+  );
+  headers.append(
+    "set-cookie",
+    `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0`
+  );
+  headers.append("set-cookie", cookie);
+
   return new Response(null, {
     status: 302,
-    headers: {
-      location,
-      "set-cookie": cookie,
-    },
+    headers,
   });
 }
 
@@ -755,6 +802,8 @@ function cookieAttrs(env, requestUrl) {
     /* ignore */
   }
   // Same eTLD+1 as console (app.*.work): Lax + Domain. Cross-site workers.dev: None.
+  // Do not invent Domain= from workers.dev responses — browsers reject Domain that
+  // does not match the response host. OAuth callbacks are pinned to app.* instead.
   if (host.endsWith(".securepublish.work") || host === "securepublish.work") {
     return { sameSite: "Lax", domain: "; Domain=.securepublish.work" };
   }
@@ -799,14 +848,31 @@ function clearSessionCookieVariants(_env = {}, _requestUrl = "") {
   ];
 }
 
-async function readSessionCookie(request, secret) {
-  const raw = request.headers.get("cookie") || "";
-  const match = raw.match(new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]+)`));
-  if (!match) return null;
-  const [body, sig] = match[1].split(".");
+/**
+ * Parse Cookie header values for COOKIE_NAME. Browsers may send both a host-only
+ * zombie and a Domain=.securepublish.work cookie with the same name; first-match
+ * alone rejected valid Domain cookies when an invalid sibling was listed first.
+ * @returns {string[]}
+ */
+function sessionCookieValues(raw) {
+  const out = [];
+  const re = new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]*)`, "g");
+  let m;
+  while ((m = re.exec(String(raw || "")))) {
+    let v = (m[1] || "").trim();
+    if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
+      v = v.slice(1, -1);
+    }
+    if (v) out.push(v);
+  }
+  return out;
+}
+
+async function parseSessionValue(value, secret) {
+  const [body, sig] = String(value).split(".");
   if (!body || !sig) return null;
   const expected = await hmacSign(body, secret);
-  if (!timingSafeEqual(sig, expected)) return null;
+  if (!timingSafeEqual(sig.toLowerCase(), expected)) return null;
   try {
     const pad = body.length % 4 === 0 ? "" : "=".repeat(4 - (body.length % 4));
     const json = JSON.parse(atob(body.replace(/-/g, "+").replace(/_/g, "/") + pad));
@@ -815,6 +881,16 @@ async function readSessionCookie(request, secret) {
   } catch {
     return null;
   }
+}
+
+async function readSessionCookie(request, secret) {
+  if (!secret) return null;
+  const values = sessionCookieValues(request.headers.get("cookie") || "");
+  for (const value of values) {
+    const session = await parseSessionValue(value, secret);
+    if (session) return session;
+  }
+  return null;
 }
 
 async function hmacSign(message, secret) {

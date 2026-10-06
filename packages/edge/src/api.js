@@ -20,7 +20,9 @@ import {
   getTenant,
   claimSubdomain,
   claimCustomHostname,
+  clearPendingCustomHostname,
   verifyCustomHostname,
+  customVerifyChallenge,
   accessToApiMode,
   accessToAllowlist,
   formatPublishedLabel,
@@ -49,7 +51,7 @@ export function corsHeaders(request, env) {
   const allowed = consoleOrigins(env);
   const headers = {
     Vary: "Origin",
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Accept",
     "Access-Control-Allow-Credentials": "true",
     "Access-Control-Max-Age": "86400",
@@ -163,6 +165,10 @@ export async function handleApiRoutes(request, env) {
     return handleCustom(request, env, { email, domain });
   }
 
+  if (url.pathname === "/api/hosting/custom" && request.method === "DELETE") {
+    return handleCustomDelete(request, env, { email });
+  }
+
   if (url.pathname === "/api/hosting/custom/verify" && request.method === "POST") {
     return handleCustomVerify(request, env, { email, domain });
   }
@@ -197,8 +203,25 @@ async function resolveHost(kv, email, env) {
 
 async function handleMe(request, env, { email, domain, idp }) {
   const host = await resolveHost(env.PANELS, email, env);
-  // host is string | null — never ""
-  return json({ email, idp, domain, host }, 200, request, env);
+  const tenant = await getTenant(env.PANELS, email);
+  const customHostname = tenant?.customHostname
+    ? String(tenant.customHostname).trim().toLowerCase() || null
+    : null;
+  const customVerified = Boolean(tenant?.customVerified);
+  const body = {
+    email,
+    idp,
+    domain,
+    // Serving host only (verified custom or subdomain) — never "".
+    host,
+    customHostname,
+    customVerified,
+  };
+  if (customHostname && !customVerified) {
+    const token = tenant?.customVerifyToken || null;
+    body.verify = customVerifyChallenge(customHostname, token);
+  }
+  return json(body, 200, request, env);
 }
 
 async function handleListPanels(request, env, url, { email, domain }) {
@@ -249,8 +272,14 @@ async function handleListPanels(request, env, url, { email, domain }) {
     const viewData = await getViews(kv, id);
     const { views, viewers } = viewsToApi(viewData);
 
+    const title =
+      typeof record.title === "string" && record.title.trim()
+        ? record.title.trim()
+        : "untitled";
+
     panels.push({
       id,
+      title,
       publisherEmail: publisherEmail || null,
       mode,
       allowlist: accessToAllowlist(record.access),
@@ -532,6 +561,14 @@ async function handleCustom(request, env, { email }) {
     request,
     env
   );
+}
+
+async function handleCustomDelete(request, env, { email }) {
+  const result = await clearPendingCustomHostname(env.PANELS, email);
+  if (!result.ok) {
+    return err(result.error || "error", result.status || 400, request, env);
+  }
+  return json({ ok: true }, 200, request, env);
 }
 
 async function handleCustomVerify(request, env, { email }) {
