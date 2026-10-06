@@ -7,7 +7,7 @@ const DOH_ENDPOINT = "https://cloudflare-dns.com/dns-query";
 
 /**
  * Unquote DoH TXT `data` fields.
- * Cloudflare often returns `"sp-verify=a@b.com"` or adjacent chunks `"a""b"`.
+ * Cloudflare often returns `"sp-verify=<token>"` or adjacent chunks `"a""b"`.
  * @param {string} data
  * @returns {string}
  */
@@ -35,7 +35,7 @@ export function unquoteTxt(data) {
 
 /**
  * @param {string[]} records unquoted TXT strings
- * @param {string} expected e.g. sp-verify=owner@example.com
+ * @param {string} expected e.g. sp-verify=<opaque-token>
  * @returns {boolean}
  */
 export function txtMatchesVerify(records, expected) {
