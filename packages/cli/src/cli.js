@@ -17,8 +17,10 @@ import {
   normalizeDomains,
 } from "./acl.js";
 
+const CLI = "securepublish-cli";
+
 const HELP = `
-secure-publish — publish AI HTML dashboards behind company SSO
+${CLI} — publish AI HTML dashboards behind company SSO
 
 Auth model:
   The URL path is the panel id (KV lookup only) — NOT a credential.
@@ -30,14 +32,14 @@ Auth model:
     --to a@x,b@y       explicit email allowlist (still requires SSO)
 
 Usage:
-  secure-publish login
-  secure-publish publish <file.html> [--title "..."] [--to email,email] [--mock]
-  secure-publish logout
-  secure-publish list [--remote]
-  secure-publish revoke <key>
-  secure-publish doctor
-  secure-publish mock-serve [--port 8787]
-  secure-publish help
+  ${CLI} login
+  ${CLI} publish <file.html> [--title "..."] [--to email,email] [--mock]
+  ${CLI} logout
+  ${CLI} list [--remote]
+  ${CLI} revoke <key>
+  ${CLI} doctor
+  ${CLI} mock-serve [--port 8787]
+  ${CLI} help
 
 Sign in with Google via \`login\`. Publish uses that account.
 Do not set CLOUDFLARE_API_TOKEN for publish.
@@ -98,7 +100,7 @@ function requireCf(cfg) {
   const missing = configHints(cfg);
   if (missing.length) {
     throw new Error(
-      `Missing config: ${missing.join(", ")}\nRun: secure-publish doctor`
+      `Missing config: ${missing.join(", ")}\nRun: ${CLI} doctor`
     );
   }
 }
@@ -298,7 +300,7 @@ async function cmdLogout(cfg) {
 async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
   const session = readPublishSession();
   if (!session) {
-    throw new Error("Conta não ligada nesta máquina. Rode secure-publish login.");
+    throw new Error(`Conta não ligada nesta máquina. Rode ${CLI} login.`);
   }
   const apiBase = (session.apiBase || apiBaseOf(cfg)).replace(/\/$/, "");
   const title =
@@ -355,7 +357,7 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
 async function cmdPublish(fileArg, flags, cfg) {
   if (!fileArg) {
     throw new Error(
-      'Usage: secure-publish publish <file.html> [--title "..."] [--to email,email]'
+      `Usage: ${CLI} publish <file.html> [--title "..."] [--to email,email]`
     );
   }
   const filePath = path.resolve(fileArg);
@@ -516,7 +518,7 @@ async function cmdList(flags, cfg) {
 }
 
 async function cmdRevoke(key, cfg, flags) {
-  if (!key) throw new Error("Usage: secure-publish revoke <key>");
+  if (!key) throw new Error(`Usage: ${CLI} revoke <key>`);
   const useMock = Boolean(flags.mock || cfg.mock);
 
   process.stderr.write(`Revoking ${key}…\n`);
@@ -547,21 +549,21 @@ async function cmdRevoke(key, cfg, flags) {
 
 async function cmdDoctor(cfg) {
   if (!cfg.mock && !operatorMode({})) {
-    const lines = ["secure-publish doctor", "─────────────────────"];
+    const lines = [`${CLI} doctor`, "─────────────────────"];
     const session = readPublishSession();
     if (session) {
       lines.push(`Status: conta ligada${session.email ? " (" + session.email + ")" : ""}.`);
       if (session.host) lines.push(`host: ${session.host}`);
-      lines.push("Next: secure-publish publish <file.html>");
+      lines.push(`Next: ${CLI} publish <file.html>`);
     } else {
       lines.push("Status: conta não ligada nesta máquina.");
-      lines.push("Next: secure-publish login");
+      lines.push(`Next: ${CLI} login`);
     }
     console.log(lines.join("\n"));
     return session ? 0 : 1;
   }
   const lines = [];
-  lines.push("secure-publish doctor");
+  lines.push(`${CLI} doctor`);
   lines.push("─────────────────────");
   lines.push(`Node:                 ${process.version}`);
   lines.push(`mock mode:            ${cfg.mock ? "ON" : "off"}`);
@@ -624,7 +626,7 @@ async function cmdDoctor(cfg) {
       const v = await verifyToken(cfg.apiToken);
       lines.push(`Token verify: OK (${v.result?.status || "active"})`);
       lines.push("");
-      lines.push("Next: secure-publish publish examples/panel-vendas.html --title \"…\"");
+      lines.push(`Next: ${CLI} publish examples/panel-vendas.html --title \"…\"`);
       if (!cfg.baseUrl) {
         lines.push("  Tip: set SECURE_PUBLISH_BASE_URL=https://demo.securepublish.work");
       }
@@ -748,7 +750,7 @@ async function cmdMockServe(flags, cfg) {
     server.listen(port, "127.0.0.1", (err) => (err ? reject(err) : resolve()));
   });
   console.log(
-    `secure-publish mock-serve on http://127.0.0.1:${port} (domains: ${companyDomains.join(", ")})`
+    `${CLI} mock-serve on http://127.0.0.1:${port} (domains: ${companyDomains.join(", ")})`
   );
   console.log("Header X-Mock-User simulates SSO session. Ctrl+C to stop.");
   return server;

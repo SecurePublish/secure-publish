@@ -176,7 +176,7 @@ export default {
           "Console API: /api/me /api/panels /api/hosting/* (SSO required)",
           "OAuth: /auth/{google|microsoft|github} · /auth/logout",
           "Use /{panel-id} após login SSO.",
-          "Publish: secure-publish publish <file.html> [--to email,email]",
+          "Publish: securepublish-cli publish <file.html> [--to email,email]",
           "",
         ].join("\n"),
         {

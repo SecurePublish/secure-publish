@@ -77,10 +77,10 @@ export SECURE_PUBLISH_KV_NAMESPACE_ID=46d61ee3d1f7410fa081e383b776934a
 export SECURE_PUBLISH_BASE_URL=https://demo.securepublish.work
 export SECURE_PUBLISH_COMPANY_DOMAINS=wises.com.br
 
-node packages/cli/bin/secure-publish.js doctor
+node packages/cli/bin/securepublish-cli.js doctor
 # expect: token verify OK
 
-node packages/cli/bin/secure-publish.js publish examples/panel-vendas.html \
+node packages/cli/bin/securepublish-cli.js publish examples/panel-vendas.html \
   --title "E2E wildcard"
 # note the printed URL → PANEL_URL
 
@@ -96,7 +96,7 @@ curl -sI "$PANEL_URL" | head -5
 Proof file after a real run: `E2E-WILDCARD.txt`. Without a token, use mock only:
 
 ```bash
-SECURE_PUBLISH_MOCK=1 node packages/cli/bin/secure-publish.js doctor
+SECURE_PUBLISH_MOCK=1 node packages/cli/bin/securepublish-cli.js doctor
 npm run e2e:mock
 ```
 

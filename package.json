@@ -8,15 +8,14 @@
     "packages/edge"
   ],
   "bin": {
-    "secure-publish": "./packages/cli/bin/secure-publish.js"
+    "securepublish-cli": "./packages/cli/bin/securepublish-cli.js"
   },
   "scripts": {
     "deploy": "npm run deploy -w @secure-publish/edge",
     "dev:edge": "npm run dev -w @secure-publish/edge",
-    "secure-publish": "node packages/cli/bin/secure-publish.js",
-    "sp": "node packages/cli/bin/secure-publish.js",
-    "doctor": "node packages/cli/bin/secure-publish.js doctor",
-    "list": "node packages/cli/bin/secure-publish.js list",
+    "securepublish-cli": "node packages/cli/bin/securepublish-cli.js",
+    "doctor": "node packages/cli/bin/securepublish-cli.js doctor",
+    "list": "node packages/cli/bin/securepublish-cli.js list",
     "e2e:mock": "node scripts/e2e-mock.mjs",
     "test:cli-bin": "node --test test/github-npx-bin.test.mjs"
   },

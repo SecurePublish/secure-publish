@@ -1,11 +1,10 @@
 {
-  "name": "secure-publish",
+  "name": "securepublish-cli",
   "version": "0.1.0",
   "description": "CLI to publish AI HTML dashboards behind company SSO",
   "type": "module",
   "bin": {
-    "secure-publish": "./bin/secure-publish.js",
-    "sp": "./bin/secure-publish.js"
+    "securepublish-cli": "./bin/securepublish-cli.js"
   },
   "main": "./src/index.js",
   "engines": {
@@ -21,7 +20,7 @@
     "kv",
     "dashboard",
     "sso",
-    "secure-publish"
+    "securepublish-cli"
   ],
   "license": "MIT",
   "dependencies": {}

@@ -18,11 +18,13 @@ Install the skill (already used by the landing):
 npx skills add https://github.com/clovistx/secure-publish --skill "secure-publish"
 ```
 
-Run the CLI from this repo (not the public npm package named `secure-publish` — that is a different project). Do **not** run `npm install -g secure-publish` or `npx secure-publish`. Use only:
+Run the CLI from this repo (not the public npm package named `secure-publish` — that is a different project). Do **not** run `npm install secure-publish`, `npm install -g secure-publish`, or `npx secure-publish`. Use only the full form every time (npx does **not** leave `securepublish-cli` on PATH):
 
 ```bash
-npx --yes github:clovistx/secure-publish
+npx --yes github:clovistx/secure-publish <subcommand>
 ```
+
+That runs this repo’s `securepublish-cli` binary for that one invocation (login, publish, help, and the rest).
 
 User prompts this skill handles:
 

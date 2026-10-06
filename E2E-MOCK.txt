@@ -20,7 +20,7 @@ access: allowlist (ana@empresa.com, bia@empresa.com)
 note:   URL identifies the panel; viewer needs SSO, then domain/allowlist ACL. Not org membership (V1).
 
 --- mock-serve ---
-secure-publish mock-serve on http://127.0.0.1:18791 (domains: empresa.com)
+securepublish-cli mock-serve on http://127.0.0.1:18791 (domains: empresa.com)
 
 --- ACL cases ---
 PASS  company no session  got 403 expected 403
