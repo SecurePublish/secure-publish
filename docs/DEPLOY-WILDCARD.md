@@ -38,7 +38,7 @@ cd packages/edge
 npx wrangler deploy   # picks up [vars] from wrangler.toml
 ```
 
-OAuth callbacks stay on the **Worker** host: `/_auth/callback/{provider}` (Google on workers.dev and on `*.securepublish.work` if redirect URIs include both).
+OAuth callbacks are pinned to **`https://app.securepublish.work/_auth/callback/{provider}`** (one URL per IdP). Starts on other hosts bounce to `app.` for the round trip.
 
 ### `SP_API_BASE` (Cameron / console)
 
@@ -104,4 +104,4 @@ npm run e2e:mock
 
 - Dedicated `api.securepublish.work` (optional; not required — `/api` already on wildcard Worker)
 - Migrate cookie to SameSite=Lax when console API stays on `*.securepublish.work`
-- GitHub / Microsoft OAuth apps (V1 = **Google only**)
+- Paste GitHub / Microsoft OAuth secrets when Clovis creates the apps (Worker already fail-closed until both CLIENT_ID + CLIENT_SECRET are set)

@@ -9,7 +9,7 @@
  * 5) Custom domain: claim + verify ownership before serving as host
  */
 
-import { requireSsoSession, ssoMode } from "./sso.js";
+import { requireSsoSession, ssoMode, oauthCallbackOrigin } from "./sso.js";
 import {
   getPanel,
   putPanel,
@@ -334,11 +334,11 @@ async function handlePatchAccess(request, env, panelId, { email }) {
 
 async function handleDeviceCode(request, env) {
   const created = await createDeviceCode(env.PANELS);
-  const origin = new URL(request.url).origin;
+  const origin = oauthCallbackOrigin(env);
   return json(
     {
       device_code: created.device_code,
-      verification_url: `${origin}/auth/google?device=${created.device_code}`,
+      verification_url: `${origin}/_auth/login?device=${created.device_code}`,
       expires_in: created.expires_in,
       interval: created.interval,
     },

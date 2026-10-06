@@ -15,8 +15,9 @@ Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)
 | PUT | `/api/hosting/subdomain` | `{ slug }` → `{ host }` |
 | PUT | `/api/hosting/custom` | `{ hostname }` → claim; **not served until verified** |
 | POST | `/api/hosting/custom/verify` | DoH TXT `_secure-publish.<host>` = `sp-verify=<email>` → `customVerified` + switch `host` |
-| GET | `/auth/{google\|microsoft\|github}` | OAuth start (`?next=` → return) |
+| GET | `/auth/{google\|microsoft\|github}` | OAuth start (`?next=` → return). 503 if that IdP’s CLIENT_ID/SECRET missing |
 | GET\|POST | `/auth/logout` | Clear `secure_publish_session` with **same** Path/SameSite/Secure/Domain as login → 302 first `CONSOLE_ORIGIN` + `/signup/` (idempotent; ignores `?next=`; `cache-control: no-store`) |
+| POST | `/api/device/code` | `{ verification_url: /_auth/login?device=… }` — configured IdPs only on the login page |
 | GET | `/:panelId` | HTML after SSO + ACL (Lock A) |
 
 ### Marcus checklist
@@ -71,7 +72,7 @@ npx wrangler deploy
 
 ## Gaps (John / ops)
 
-- OAuth client IDs/secrets + redirect URIs (`/_auth/callback/{provider}`).
+- OAuth client IDs/secrets + redirect URIs (`https://app.securepublish.work/_auth/callback/{provider}` only).
 - DNS: `*.securepublish.work` → Worker; custom domain: TXT `_secure-publish.{host}=sp-verify=<email>` then `POST /api/hosting/custom/verify`; CNAME de tráfego (`cname.securepublish.work`) TBD (John/CF).
 - Email provider for `sendInvite`.
 - Cloudflare Access (`TEAM_DOMAIN` + `POLICY_AUD`) if preferred over Worker OAuth.

@@ -18,6 +18,23 @@ import { approveDeviceCode } from "./kv.js";
 const COOKIE_NAME = "secure_publish_session";
 const SESSION_TTL_SEC = 60 * 60 * 12; // 12h
 
+/** Single production OAuth callback host (GitHub allows one callback URL). */
+const DEFAULT_OAUTH_CALLBACK_ORIGIN = "https://app.securepublish.work";
+
+/**
+ * Canonical origin for IdP redirect_uri. Override with OAUTH_CALLBACK_ORIGIN for local wrangler.
+ * @param {Record<string, string | undefined>} env
+ */
+export function oauthCallbackOrigin(env = {}) {
+  const raw = env.OAUTH_CALLBACK_ORIGIN || DEFAULT_OAUTH_CALLBACK_ORIGIN;
+  return String(raw).replace(/\/$/, "");
+}
+
+/** @param {Record<string, string | undefined>} env @param {string} provider */
+export function oauthRedirectUri(env, provider) {
+  return `${oauthCallbackOrigin(env)}/_auth/callback/${provider}`;
+}
+
 /** @param {Record<string, string | undefined>} env */
 export function ssoMode(env) {
   if (env.SSO_DEV_BYPASS === "1" || env.SSO_DEV_BYPASS === "true") {
@@ -32,13 +49,29 @@ export function ssoMode(env) {
   return "none";
 }
 
+/**
+ * True when both CLIENT_ID and CLIENT_SECRET are set for the IdP.
+ * @param {Record<string, string | undefined>} env
+ * @param {string} provider
+ */
+export function isProviderConfigured(env, provider) {
+  const cfg = PROVIDERS[provider];
+  if (!cfg) return false;
+  return Boolean(env[cfg.idEnv] && env[cfg.secretEnv]);
+}
+
 /** @param {Record<string, string | undefined>} env */
 function hasAnyOauthProvider(env) {
-  return Boolean(
-    (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) ||
-      (env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) ||
-      (env.MICROSOFT_CLIENT_ID && env.MICROSOFT_CLIENT_SECRET)
+  return (
+    isProviderConfigured(env, "google") ||
+    isProviderConfigured(env, "github") ||
+    isProviderConfigured(env, "microsoft")
   );
+}
+
+/** @param {Record<string, string | undefined>} env */
+function configuredProviders(env) {
+  return Object.keys(PROVIDERS).filter((name) => isProviderConfigured(env, name));
 }
 
 function consoleOrigins(env) {
@@ -257,8 +290,18 @@ export async function handleAuthRoutes(request, env) {
     return deviceDonePage(url.searchParams.get("retry") !== "1");
   }
 
+  if (url.pathname === "/_auth/resume" || url.pathname === "/_auth/resume/") {
+    return oauthResume(request, env);
+  }
+
   const cb = url.pathname.match(/^\/_auth\/callback\/(google|github|microsoft)\/?$/);
   if (cb) {
+    const canonical = oauthCallbackOrigin(env);
+    if (url.origin !== canonical) {
+      // Code was issued for the canonical redirect_uri — finish there.
+      const home = new URL(url.pathname + url.search, canonical + "/");
+      return Response.redirect(home.toString(), 302);
+    }
     return oauthCallback(request, env, cb[1]);
   }
 
@@ -285,11 +328,15 @@ function loginPage(url, env) {
   const device = url.searchParams.get("device") || "";
   const deviceQs = /^[a-f0-9]{64}$/.test(device) ? `&device=${device}` : "";
   const en = url.searchParams.get("lang") === "en";
+  const providers = configuredProviders(env);
+  const googleOnly = providers.length === 1 && providers[0] === "google";
   const copy = en
     ? {
         title: "Sign in to view",
         lede: "Sign in with your company account to view the dashboard.",
-        tip: "Use your company Google account — the same email domain controls who can view.",
+        tip: googleOnly
+          ? "Use your company Google account — the same email domain controls who can view."
+          : "Use your company account — the same email domain controls who can view.",
         google: "Continue with Google",
         other: (n) => `Continue with ${n}`,
         langLabel: "Language",
@@ -297,26 +344,23 @@ function loginPage(url, env) {
     : {
         title: "Entrar para ver",
         lede: "Entre com a conta da empresa para ver o dashboard.",
-        tip: "Use a conta Google da empresa — o mesmo domínio de e-mail define quem pode ver.",
+        tip: googleOnly
+          ? "Use a conta Google da empresa — o mesmo domínio de e-mail define quem pode ver."
+          : "Use a conta da empresa — o mesmo domínio de e-mail define quem pode ver.",
         google: "Continuar com Google",
         other: (n) => `Entrar com ${n}`,
         langLabel: "Idioma",
       };
 
   const links = [];
-  for (const [name, cfg] of Object.entries(PROVIDERS)) {
-    if (env[cfg.idEnv] && env[cfg.secretEnv]) {
-      const href = `/_auth/start/${name}?return_to=${encodeURIComponent(returnTo)}${deviceQs}`;
-      const label =
-        name === "google" ? copy.google : copy.other(labelProvider(name));
-      const icon =
-        name === "google"
-          ? `<span class="idp-btn__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="20" height="20" focusable="false"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg></span>`
-          : "";
-      links.push(
-        `<a class="idp-btn" href="${href}">${icon}<span class="idp-btn__label">${escapeHtml(label)}</span></a>`
-      );
-    }
+  for (const name of providers) {
+    const href = `/_auth/start/${name}?return_to=${encodeURIComponent(returnTo)}${deviceQs}`;
+    const label =
+      name === "google" ? copy.google : copy.other(labelProvider(name));
+    const icon = providerIcon(name);
+    links.push(
+      `<a class="idp-btn" href="${href}">${icon}<span class="idp-btn__label">${escapeHtml(label)}</span></a>`
+    );
   }
   if (!links.length) {
     return new Response("Nenhum provedor OAuth configurado.\n", {
@@ -442,16 +486,43 @@ function labelProvider(name) {
   return name;
 }
 
+function providerIcon(name) {
+  if (name === "google") {
+    return `<span class="idp-btn__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="20" height="20" focusable="false"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg></span>`;
+  }
+  if (name === "github") {
+    return `<span class="idp-btn__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" focusable="false"><path fill="#24292F" d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.1c-3.3.7-4-1.4-4-1.4-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 .1.8 1.6 2.8 1.1.1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6a4.6 4.6 0 0 1 1.2-3.2 4.3 4.3 0 0 1 .1-3.1s1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.2 2.9.1 3.1a4.6 4.6 0 0 1 1.2 3.2c0 4.7-2.8 5.7-5.5 6 .4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3z"/></svg></span>`;
+  }
+  if (name === "microsoft") {
+    return `<span class="idp-btn__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 23 23" width="20" height="20" focusable="false"><path fill="#F25022" d="M1 1h10v10H1z"/><path fill="#00A4EF" d="M12 1h10v10H12z"/><path fill="#7FBA00" d="M1 12h10v10H1z"/><path fill="#FFB900" d="M12 12h10v10H12z"/></svg></span>`;
+  }
+  return "";
+}
+
 /** @param {URL} url @param {Record<string, string | undefined>} env @param {string} provider */
 function oauthStart(url, env, provider) {
   const cfg = PROVIDERS[provider];
-  const clientId = env[cfg.idEnv];
-  if (!clientId) {
-    return new Response(`Provedor ${provider} não configurado.\n`, { status: 503 });
+  if (!cfg || !isProviderConfigured(env, provider)) {
+    return new Response(`Provedor ${provider} não configurado.\n`, {
+      status: 503,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
   }
-  const returnTo = url.searchParams.get("return_to") || url.searchParams.get("next") || "/";
+  const clientId = env[cfg.idEnv];
+  const returnToRaw = url.searchParams.get("return_to") || url.searchParams.get("next") || "/";
   const device = url.searchParams.get("device") || "";
-  const redirectUri = `${url.origin}/_auth/callback/${provider}`;
+  // Keep the host where login began so we can return there after the IdP round trip.
+  const returnTo = absoluteReturnTo(returnToRaw, url.origin);
+  const canonical = oauthCallbackOrigin(env);
+
+  if (url.origin !== canonical) {
+    const bounce = new URL(`/_auth/start/${provider}`, canonical + "/");
+    bounce.searchParams.set("return_to", returnTo);
+    if (/^[a-f0-9]{64}$/.test(device)) bounce.searchParams.set("device", device);
+    return Response.redirect(bounce.toString(), 302);
+  }
+
+  const redirectUri = oauthRedirectUri(env, provider);
   const stateBody = { returnTo, provider, n: crypto.randomUUID() };
   if (/^[a-f0-9]{64}$/.test(device)) stateBody.device = device;
   const state = encodeState(stateBody);
@@ -463,11 +534,29 @@ function oauthStart(url, env, provider) {
     scope: cfg.scope,
     state,
   });
-  if (provider === "google" || provider === "microsoft") {
+  if (provider === "google") {
     params.set("access_type", "online");
   }
 
   return Response.redirect(`${cfg.authUrl}?${params}`, 302);
+}
+
+/**
+ * Turn relative return_to into an absolute URL on the host where login started.
+ * Absolute URLs are kept as-is (validated later by safeReturnTo).
+ */
+function absoluteReturnTo(returnTo, requestOrigin) {
+  if (!returnTo || typeof returnTo !== "string") {
+    return `${requestOrigin}/`;
+  }
+  if (returnTo.startsWith("/") && !returnTo.startsWith("//")) {
+    try {
+      return new URL(returnTo, requestOrigin + "/").toString();
+    } catch {
+      return `${requestOrigin}/`;
+    }
+  }
+  return returnTo;
 }
 
 /**
@@ -478,6 +567,12 @@ function oauthStart(url, env, provider) {
 async function oauthCallback(request, env, provider) {
   const url = new URL(request.url);
   const cfg = PROVIDERS[provider];
+  if (!cfg || !isProviderConfigured(env, provider)) {
+    return new Response(`Provedor ${provider} não configurado.\n`, {
+      status: 503,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
   const code = url.searchParams.get("code");
   const stateRaw = url.searchParams.get("state");
   if (!code || !stateRaw) {
@@ -493,7 +588,7 @@ async function oauthCallback(request, env, provider) {
 
   const clientId = env[cfg.idEnv];
   const clientSecret = env[cfg.secretEnv];
-  const redirectUri = `${url.origin}/_auth/callback/${provider}`;
+  const redirectUri = oauthRedirectUri(env, provider);
 
   const tokenRes = await fetch(cfg.tokenUrl, {
     method: "POST",
@@ -520,9 +615,10 @@ async function oauthCallback(request, env, provider) {
     return new Response("Token OAuth ausente.\n", { status: 502 });
   }
 
-  const email = await fetchUserEmail(provider, cfg, accessToken);
+  const idTokenClaims = decodeJwtPayload(tokenJson.id_token);
+  const email = await resolveOauthEmail(provider, accessToken, { idTokenClaims });
   if (!email) {
-    return new Response("Não foi possível obter e-mail do provedor.\n", { status: 502 });
+    return emailRequiredPage(provider);
   }
 
   if (env.OAUTH_ALLOWED_DOMAINS) {
@@ -537,14 +633,14 @@ async function oauthCallback(request, env, provider) {
     }
   }
 
-  const cookie = await mintSessionCookie(
-    { email, provider, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SEC },
-    env.SESSION_SECRET,
-    env,
-    request.url
-  );
+  const sessionPayload = {
+    email,
+    provider,
+    exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SEC,
+  };
+  const cookie = await mintSessionCookie(sessionPayload, env.SESSION_SECRET, env, request.url);
 
-  let location = safeReturnTo(state.returnTo, env);
+  let location;
   if (state.device && /^[a-f0-9]{64}$/.test(state.device)) {
     let linked = false;
     try {
@@ -553,7 +649,11 @@ async function oauthCallback(request, env, provider) {
     } catch {
       linked = false;
     }
-    location = linked ? "/_auth/device/done" : "/_auth/device/done?retry=1";
+    const done = linked ? "/_auth/device/done" : "/_auth/device/done?retry=1";
+    location = `${oauthCallbackOrigin(env)}${done}`;
+  } else {
+    location = safeReturnTo(state.returnTo, env);
+    location = await maybeResumeHandoff(location, sessionPayload, env);
   }
 
   return new Response(null, {
@@ -565,23 +665,167 @@ async function oauthCallback(request, env, provider) {
   });
 }
 
+/**
+ * Domain=.securepublish.work cookie from app.* does not reach workers.dev / localhost.
+ * Hand the session to that host via a one-time /_auth/resume ticket.
+ * @param {string} location
+ * @param {{ email: string, provider: string, exp: number }} sessionPayload
+ * @param {Record<string, string | undefined>} env
+ */
+async function maybeResumeHandoff(location, sessionPayload, env) {
+  let dest;
+  try {
+    dest = new URL(location);
+  } catch {
+    return location;
+  }
+  const canonical = oauthCallbackOrigin(env);
+  if (dest.origin === canonical) return location;
+  const host = dest.hostname.toLowerCase();
+  if (host === "securepublish.work" || host.endsWith(".securepublish.work")) {
+    return location;
+  }
+  if (!env.PANELS?.put) return location;
+
+  const ticket = [...crypto.getRandomValues(new Uint8Array(32))]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  const ttl = 120;
+  await env.PANELS.put(
+    `oauth_resume:${ticket}`,
+    JSON.stringify({
+      email: sessionPayload.email,
+      provider: sessionPayload.provider,
+      exp: sessionPayload.exp,
+      returnTo: location,
+      ticketExp: Math.floor(Date.now() / 1000) + ttl,
+    }),
+    { expirationTtl: ttl }
+  );
+  return `${dest.origin}/_auth/resume?ticket=${ticket}`;
+}
+
+/**
+ * Finish a cross-host handoff: mint cookie for this host, then go to returnTo (same origin).
+ * @param {Request} request
+ * @param {Record<string, string | undefined>} env
+ */
+async function oauthResume(request, env) {
+  const url = new URL(request.url);
+  const ticket = url.searchParams.get("ticket") || "";
+  if (!/^[a-f0-9]{64}$/.test(ticket) || !env.PANELS?.get) {
+    return new Response("Resume inválido.\n", { status: 400 });
+  }
+  const key = `oauth_resume:${ticket}`;
+  const raw = await env.PANELS.get(key);
+  if (!raw) {
+    return new Response("Resume expirado.\n", { status: 400 });
+  }
+  await env.PANELS.delete(key);
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return new Response("Resume inválido.\n", { status: 400 });
+  }
+  if (!payload?.email || !payload.returnTo || (payload.ticketExp || 0) < Math.floor(Date.now() / 1000)) {
+    return new Response("Resume expirado.\n", { status: 400 });
+  }
+  let returnUrl;
+  try {
+    returnUrl = new URL(payload.returnTo);
+  } catch {
+    return new Response("Resume inválido.\n", { status: 400 });
+  }
+  if (returnUrl.origin !== url.origin) {
+    return new Response("Resume origem inválida.\n", { status: 400 });
+  }
+  const cookie = await mintSessionCookie(
+    {
+      email: payload.email,
+      provider: payload.provider || "oauth",
+      exp: payload.exp || Math.floor(Date.now() / 1000) + SESSION_TTL_SEC,
+    },
+    env.SESSION_SECRET,
+    env,
+    request.url
+  );
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: returnUrl.toString(),
+      "set-cookie": cookie,
+    },
+  });
+}
+
+/** Live branded device-done (QA). Was deployed but missing from git — restored from production. */
 function deviceDonePage(ok) {
   const retry = !ok;
   const title = retry ? "Não consegui ligar agora" : "Conta ligada";
   const lede = retry
     ? "Volta e tenta de novo em instantes."
-    : "Pode fechar esta aba.";
+    : "Pode fechar esta aba e voltar pro agente.";
   const html = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>${title}</title>
+<title>${escapeHtml(title)} — Secure Publish</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,550;9..144,600&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --cream:#FAF8F5;--cream-2:#F3EFE9;--stone:#E8E2D9;--ink:#292524;--ink-soft:#57534E;--muted:#78716C;
+  --line:#E7E0D6;--sage:#5F7A61;
+  --display:"Fraunces",Georgia,serif;--sans:"DM Sans",system-ui,sans-serif;
+  --max:540px;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;min-height:100vh;
+  font-family:var(--sans);font-size:1rem;line-height:1.5;color:var(--ink);
+  background:
+    radial-gradient(1200px 600px at 10% -10%,rgba(95,122,97,.08),transparent 55%),
+    var(--cream-2);
+}
+.topbar{
+  display:flex;align-items:center;gap:1rem;
+  padding:.85rem 1.35rem;border-bottom:1px solid var(--line);
+  background:rgba(255,254,252,.94);backdrop-filter:blur(10px);
+}
+.topbar__brand{
+  font-family:var(--display);font-weight:600;font-size:1.12rem;letter-spacing:-.02em;
+  color:var(--ink);display:inline-flex;align-items:center;gap:.45rem;
+}
+.topbar__mark{display:inline-flex;width:1.35rem;height:1.35rem;color:var(--sage);flex-shrink:0}
+.topbar__mark svg{width:100%;height:100%;display:block}
+.main{width:min(100% - 2rem,var(--max));margin:2.25rem auto 3rem}
+.kicker{
+  margin:0 0 .45rem;font-size:.75rem;font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--sage);
+}
+h1{
+  margin:0 0 .4rem;font-family:var(--display);font-weight:600;font-size:clamp(1.55rem,3vw,1.85rem);
+  letter-spacing:-.02em;line-height:1.2;color:var(--ink);
+}
+.lede{margin:0;color:var(--ink-soft);font-size:1.02rem;line-height:1.55}
+</style>
 </head>
-<body style="font-family:Georgia,serif;background:#F3EFE9;color:#292524;margin:0">
-<main style="max-width:32rem;margin:4rem auto;padding:0 1.25rem">
-<h1 style="font-weight:600">${title}</h1>
-<p>${lede}</p>
+<body>
+<header class="topbar">
+  <span class="topbar__brand">
+    <span class="topbar__mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="11" width="18" height="10" rx="2" stroke="currentColor" stroke-width="1.75"/><path d="M7 11V8a5 5 0 0 1 10 0v3" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/><circle cx="12" cy="16" r="1.5" fill="currentColor"/></svg>
+    </span>
+    Secure Publish
+  </span>
+</header>
+<main class="main">
+  <p class="kicker">Secure Publish</p>
+  <h1>${escapeHtml(title)}</h1>
+  <p class="lede">${escapeHtml(lede)}</p>
 </main>
 </body>
 </html>`;
@@ -591,7 +835,43 @@ function deviceDonePage(ok) {
   });
 }
 
-async function fetchUserEmail(provider, cfg, accessToken) {
+function isValidEmail(value) {
+  if (typeof value !== "string") return false;
+  const email = value.trim().toLowerCase();
+  if (!email || email.includes(" ")) return false;
+  if (email.includes("#ext#")) return false;
+  if (email.endsWith("@users.noreply.github.com")) return false;
+  const at = email.indexOf("@");
+  if (at < 1 || at !== email.lastIndexOf("@")) return false;
+  const domain = email.slice(at + 1);
+  return domain.includes(".") && !domain.startsWith(".") && !domain.endsWith(".");
+}
+
+function decodeJwtPayload(jwt) {
+  if (!jwt || typeof jwt !== "string") return null;
+  try {
+    const parts = jwt.split(".");
+    if (parts.length < 2) return null;
+    const pad = parts[1].length % 4 === 0 ? "" : "=".repeat(4 - (parts[1].length % 4));
+    const json = atob(parts[1].replace(/-/g, "+").replace(/_/g, "/") + pad);
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve a verified email from an IdP. Fail closed — never noreply / unverified /
+ * preferred_username-only guesses.
+ * @param {string} provider
+ * @param {string} accessToken
+ * @param {{ idTokenClaims?: Record<string, unknown> | null }} [opts]
+ * @returns {Promise<string | null>}
+ */
+export async function resolveOauthEmail(provider, accessToken, opts = {}) {
+  const cfg = PROVIDERS[provider];
+  if (!cfg) return null;
+
   if (provider === "github") {
     const emailsRes = await fetch(cfg.emailUrl, {
       headers: {
@@ -600,30 +880,32 @@ async function fetchUserEmail(provider, cfg, accessToken) {
         "user-agent": "secure-publish",
       },
     });
-    if (emailsRes.ok) {
-      const emails = await emailsRes.json();
-      const primary = emails.find((e) => e.primary && e.verified) || emails.find((e) => e.verified);
-      if (primary?.email) return primary.email;
+    if (!emailsRes.ok) return null;
+    const emails = await emailsRes.json();
+    if (!Array.isArray(emails)) return null;
+    const primary = emails.find((e) => e && e.primary && e.verified);
+    if (primary?.email && isValidEmail(primary.email)) {
+      return primary.email.trim().toLowerCase();
     }
-    const userRes = await fetch(cfg.userUrl, {
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        accept: "application/vnd.github+json",
-        "user-agent": "secure-publish",
-      },
-    });
-    if (!userRes.ok) return null;
-    const user = await userRes.json();
-    return user.email || null;
+    return null;
   }
 
   if (provider === "microsoft") {
+    const claims = opts.idTokenClaims || null;
+    if (claims && claims.email_verified === false) {
+      /* continue to Graph mail only */
+    } else if (claims && isValidEmail(claims.email) && claims.email_verified !== false) {
+      return String(claims.email).trim().toLowerCase();
+    }
+
     const res = await fetch(cfg.userUrl, {
       headers: { authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) return null;
     const me = await res.json();
-    return me.mail || me.userPrincipalName || null;
+    if (isValidEmail(me.mail)) return String(me.mail).trim().toLowerCase();
+    // Do not use preferred_username or guest UPNs as an email guess.
+    return null;
   }
 
   const res = await fetch(cfg.userUrl, {
@@ -631,17 +913,75 @@ async function fetchUserEmail(provider, cfg, accessToken) {
   });
   if (!res.ok) return null;
   const me = await res.json();
-  return me.email || null;
+  if (!isValidEmail(me.email) || me.verified_email === false) return null;
+  return String(me.email).trim().toLowerCase();
+}
+
+function emailRequiredPage(provider) {
+  const name = labelProvider(provider);
+  const isGithub = provider === "github";
+  const title = "E-mail verificado necessário";
+  const lede = isGithub
+    ? "Não encontramos um e-mail primário verificado na sua conta GitHub. Torne um e-mail primário e verificado visível (Settings → Emails) e tente de novo. Não usamos endereços noreply."
+    : `Não encontramos um e-mail verificado na sua conta ${name}. Use uma conta com e-mail verificado e tente de novo.`;
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>${escapeHtml(title)} — Secure Publish</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,550;9..144,600&display=swap" rel="stylesheet"/>
+<style>
+:root{--cream-2:#F3EFE9;--ink:#292524;--ink-soft:#57534E;--line:#E7E0D6;--sage:#5F7A61;--display:"Fraunces",Georgia,serif;--sans:"DM Sans",system-ui,sans-serif}
+body{margin:0;min-height:100vh;font-family:var(--sans);color:var(--ink);background:radial-gradient(1200px 600px at 10% -10%,rgba(95,122,97,.08),transparent 55%),var(--cream-2)}
+.topbar{padding:.85rem 1.35rem;border-bottom:1px solid var(--line);background:rgba(255,254,252,.94);font-family:var(--display);font-weight:600}
+main{max-width:32rem;margin:3rem auto;padding:0 1.25rem}
+h1{font-family:var(--display);font-weight:600;font-size:1.55rem;letter-spacing:-.02em}
+p{color:var(--ink-soft);line-height:1.55}
+a{color:var(--sage);font-weight:600}
+</style>
+</head>
+<body>
+<header class="topbar">Secure Publish</header>
+<main>
+  <h1>${escapeHtml(title)}</h1>
+  <p>${escapeHtml(lede)}</p>
+  <p><a href="/_auth/login">Voltar ao login</a></p>
+</main>
+</body>
+</html>`;
+  return new Response(html, {
+    status: 403,
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
 }
 
 /**
- * Relative paths on Worker, or absolute URLs only if origin ∈ CONSOLE_ORIGIN.
+ * Relative paths → console origin. Absolute URLs only if origin is allowlisted
+ * (CONSOLE_ORIGIN, *.securepublish.work, *.workers.dev, localhost).
  */
+function isAllowedReturnOrigin(origin, env) {
+  if (consoleOrigins(env).includes(origin)) return true;
+  try {
+    const u = new URL(origin);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    const h = u.hostname.toLowerCase();
+    if (h === "securepublish.work" || h.endsWith(".securepublish.work")) return true;
+    if (h.endsWith(".workers.dev")) return true;
+    if (h === "localhost" || h === "127.0.0.1") return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 function safeReturnTo(path, env) {
-  if (!path || typeof path !== "string") return "/";
-  const allowed = consoleOrigins(env);
-  // Relative paths belong to the console (Pages), not panel ids on the Worker.
+  const fallback = `${oauthCallbackOrigin(env)}/`;
+  if (!path || typeof path !== "string") return fallback;
   if (path.startsWith("/") && !path.startsWith("//")) {
+    const allowed = consoleOrigins(env);
     if (allowed.length) {
       try {
         return new URL(path, allowed[0] + "/").toString();
@@ -653,11 +993,11 @@ function safeReturnTo(path, env) {
   }
   try {
     const u = new URL(path);
-    if (allowed.includes(u.origin)) return u.toString();
+    if (isAllowedReturnOrigin(u.origin, env)) return u.toString();
   } catch {
     /* ignore */
   }
-  return allowed.length ? allowed[0] + "/" : "/";
+  return fallback;
 }
 
 
@@ -837,4 +1177,11 @@ function timingSafeEqual(a, b) {
 }
 
 /** Test/helper export */
-export { readSessionCookie, mintSessionCookie, clearSessionCookie, clearSessionCookieVariants, COOKIE_NAME };
+export {
+  readSessionCookie,
+  mintSessionCookie,
+  clearSessionCookie,
+  clearSessionCookieVariants,
+  COOKIE_NAME,
+  PROVIDERS,
+};

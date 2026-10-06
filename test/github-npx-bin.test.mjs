@@ -90,7 +90,7 @@ describe("skill documents github npx invocations only", () => {
   it("keeps user-facing Portuguese lines unchanged", () => {
     assert.match(
       skill,
-      /Vou abrir o login\. Entra com Google na página que abrir — a conta fica ligada nesta máquina\./
+      /Vou abrir o login\. Entra com a conta da empresa na página que abrir \(Google, GitHub ou Microsoft\) — a conta fica ligada nesta máquina\./
     );
     assert.match(skill, /Conta ligada\. Publicando em \{host\}, aberto pra empresa\./);
     assert.match(

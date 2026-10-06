@@ -420,7 +420,7 @@ async function sha256Hex(value) {
 
 /**
  * One-time device login. The browser cookie stays HttpOnly; the CLI only
- * receives a publish token after the account owner finishes Google sign-in.
+ * receives a publish token after the account owner finishes SSO sign-in.
  */
 export async function createDeviceCode(kv) {
   const device_code = randomHex(32);
