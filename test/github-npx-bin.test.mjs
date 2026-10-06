@@ -87,12 +87,12 @@ describe("skill documents github npx invocations only", () => {
     );
   });
 
-  it("keeps user-facing Portuguese lines unchanged", () => {
+  it("keeps user-facing Portuguese dialogue lines", () => {
     assert.match(
       skill,
       /Vou abrir o login\. Entra com Google na página que abrir — a conta fica ligada nesta máquina\./
     );
-    assert.match(skill, /Conta ligada\. Publicando em \{host\}, aberto pra empresa\./);
+    assert.match(skill, /Conta ligada\. Publicando em \{host\}\./);
     assert.match(
       skill,
       /Quer restringir a alguém\? Passe os e-mails \(senão fica aberto pra empresa — mesmo domínio de e-mail\)\./
@@ -102,6 +102,28 @@ describe("skill documents github npx invocations only", () => {
     assert.match(
       skill,
       /Não consegui publicar agora\. A conta está ligada em \{host\}\. Tenta de novo em instantes\./
+    );
+  });
+
+  it("post-login line omits company-wide wording; ask restrict before publish", () => {
+    const saySection = skill.split("## What you say")[1]?.split("## Access")[0] ?? "";
+    // Exact post-login line — no "aberto pra empresa" / English equivalent on that line
+    assert.match(saySection, /> Conta ligada\. Publicando em \{host\}\.\n/);
+    assert.doesNotMatch(
+      saySection,
+      /Conta ligada\. Publicando em \{host\},?\s*(aberto pra empresa|open to the (company|org))/i
+    );
+    const linkedIdx = saySection.indexOf("Conta ligada. Publicando em {host}.");
+    const restrictIdx = saySection.indexOf("Quer restringir a alguém?");
+    const publishIdx = saySection.search(
+      /npx --yes github:clovistx\/secure-publish publish/
+    );
+    assert.ok(linkedIdx >= 0, "post-login line required");
+    assert.ok(restrictIdx >= 0, "restrict ask required");
+    assert.ok(publishIdx >= 0, "publish example required");
+    assert.ok(
+      linkedIdx < restrictIdx && restrictIdx < publishIdx,
+      "order must be: Conta ligada → Quer restringir → publish (never announce company-wide open before asking)"
     );
   });
 

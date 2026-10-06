@@ -45,22 +45,24 @@ If this machine is not signed in yet, say exactly:
 
 Then run `npx --yes github:clovistx/secure-publish login` and wait. Google only — not Microsoft, not GitHub. When it finishes, say exactly:
 
-> Conta ligada. Publicando em {host}, aberto pra empresa.
+> Conta ligada. Publicando em {host}.
+
+Do **not** add “aberto pra empresa”, “open to the company”, or any company-wide access claim on that line.
 
 Use the host the command printed. If there is no host yet, ask where to publish. Do not invent one.
 
-Then publish:
+Company-wide means the same email domain as the signed-in account. If they did **not** already say who can see the panel, ask once **before** publishing — never after announcing company-wide open:
+
+> Quer restringir a alguém? Passe os e-mails (senão fica aberto pra empresa — mesmo domínio de e-mail).
+
+Only after they answer (or they already specified access) publish:
 
 ```bash
 npx --yes github:clovistx/secure-publish publish ./dashboard.html --title "Painel"
 npx --yes github:clovistx/secure-publish publish ./dashboard.html --to clovis@wises.com.br,ana@wises.com.br
 ```
 
-Company-wide means the same email domain as the signed-in account. If they did not say who can see it, ask once:
-
-> Quer restringir a alguém? Passe os e-mails (senão fica aberto pra empresa — mesmo domínio de e-mail).
-
-On success, say exactly (do not invent `{url}` — only the url the command printed):
+On success, say exactly (do not invent `{url}` — only the url the command printed). “Aberto pra empresa” / company-wide wording belongs **only** here — in the final confirmation — not in the post-login line:
 
 > Publicado pra **toda a empresa**: {url}
 
