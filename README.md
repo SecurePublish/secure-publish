@@ -51,7 +51,7 @@ Then: *Publique este dashboard HTML com Secure Publish.*
 ## Arquitetura
 
 ```text
-CLI (securepublish-cli publish [--to])
+CLI (`npx --yes github:clovistx/secure-publish publish [--to]`)
         │  Cloudflare REST API (KV PUT)   or --mock local store
         ▼
    KV namespace "PANELS"   panel-id → { html, access }
@@ -90,22 +90,18 @@ Metadata `mode` pode ser `company` ou `org`. Os dois significam **domínio**, n�
 
 ## CLI
 
-Command name: **`securepublish-cli`**. Do **not** `npm install secure-publish` or `npx secure-publish` (unrelated public package). From this repo:
-
-```bash
-npx --yes github:clovistx/secure-publish
-```
+Package bin name: **`securepublish-cli`** (what `npx github:…` invokes). Do **not** `npm install secure-publish` or `npx secure-publish` (unrelated public package). There is no durable global install — every runnable invocation uses the full form (npx does not leave `securepublish-cli` on PATH):
 
 ```bash
 # default: toda a empresa = mesmo domínio de e-mail do tenant
-securepublish-cli publish examples/panel-vendas.html --title "Painel Vendas Q3"
+npx --yes github:clovistx/secure-publish publish examples/panel-vendas.html --title "Painel Vendas Q3"
 
 # restringir
-securepublish-cli publish examples/panel-ops.html --to ana@empresa.com,bia@empresa.com
+npx --yes github:clovistx/secure-publish publish examples/panel-ops.html --to ana@empresa.com,bia@empresa.com
 
-securepublish-cli list
-securepublish-cli revoke <key>
-securepublish-cli doctor
+npx --yes github:clovistx/secure-publish list
+npx --yes github:clovistx/secure-publish revoke <key>
+npx --yes github:clovistx/secure-publish doctor
 ```
 
 Mensagens (PT):
