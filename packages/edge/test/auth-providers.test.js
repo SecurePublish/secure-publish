@@ -102,7 +102,10 @@ describe("GET /auth/providers on app host", () => {
 describe("documented /auth/* and /api/* on app host are not swallowed by panel 404", () => {
   const PANEL_ID = "aaaaaaaaaaaaaaaaaaaaaaaa";
 
-  /** Every path in docs/API-CONTRACT.md, plus GET /auth/providers. */
+  /**
+   * Every path in docs/API-CONTRACT.md, plus GET /auth/providers and the
+   * OAuth callbacks pinned to app.securepublish.work.
+   */
   const documented = [
     { method: "GET", path: "/api/me" },
     { method: "POST", path: "/api/panels", headers: { "content-type": "application/json" }, body: "{}" },
@@ -128,10 +131,13 @@ describe("documented /auth/* and /api/* on app host are not swallowed by panel 4
     { method: "GET", path: "/auth/logout" },
     { method: "POST", path: "/auth/logout" },
     { method: "GET", path: "/auth/providers" },
+    { method: "GET", path: "/_auth/callback/google" },
+    { method: "GET", path: "/_auth/callback/github" },
+    { method: "GET", path: "/_auth/callback/microsoft" },
   ];
 
   it("lists every documented console route (guards against missing a contract path)", () => {
-    assert.equal(documented.length, 19);
+    assert.equal(documented.length, 22);
   });
 
   it("none of the documented app-host routes return the panel 404", async () => {
