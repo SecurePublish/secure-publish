@@ -5,7 +5,7 @@
  * 1) Every /api/* requires SSO session
  * 2) PATCH access = publisher only
  * 3) CORS = exact CONSOLE_ORIGIN + credentials
- * 4) viewers[] PII only for authenticated tenant users
+ * 4) viewers[] PII only for the panel publisher (email === publisherEmail)
  * 5) Custom domain: claim + verify ownership before serving as host
  */
 
@@ -82,6 +82,21 @@ function json(data, status, request, env, extraHeaders = {}) {
 
 function err(message, status, request, env) {
   return json({ error: message }, status, request, env);
+}
+
+/** viewers[] is publisher-only. Missing/blank publisherEmail never qualifies. */
+export function isPanelPublisher(requesterEmail, publisherEmail) {
+  const a = String(requesterEmail || "").trim().toLowerCase();
+  const b = String(publisherEmail || "").trim().toLowerCase();
+  return Boolean(a && b && a === b);
+}
+
+/** Always `views`; `viewers` only when requester owns the panel. */
+function viewFields(viewData, requesterEmail, publisherEmail) {
+  const { views, viewers } = viewsToApi(viewData);
+  const out = { views };
+  if (isPanelPublisher(requesterEmail, publisherEmail)) out.viewers = viewers;
+  return out;
 }
 
 /**
@@ -289,10 +304,8 @@ async function handleListPanels(request, env, url, { email, domain }) {
       }
     }
 
-    // (4) viewers PII only for authenticated tenant (we already require SSO).
-    // Same-domain publishers / company viewers may see analytics for panels they can list.
     const viewData = await getViews(kv, id);
-    const { views, viewers } = viewsToApi(viewData);
+    const stats = viewFields(viewData, email, publisherEmail);
 
     const title =
       typeof record.title === "string" && record.title.trim()
@@ -312,8 +325,7 @@ async function handleListPanels(request, env, url, { email, domain }) {
       allowlist: accessToAllowlist(record.access),
       publishedAt: record.publishedAt || null,
       publishedLabel: formatPublishedLabel(record.publishedAt),
-      views,
-      viewers,
+      ...stats,
     });
   }
 
@@ -353,12 +365,14 @@ async function handlePatchName(request, env, panelId, { email }) {
   const host = await resolveHost(kv, email, env);
   const name = storedPanelName(record);
   const path = panelPath(id, name);
+  const viewData = await getViews(kv, id);
   return json(
     {
       id,
       name,
       path,
       url: host ? `https://${host}${path}` : null,
+      ...viewFields(viewData, email, publisher),
     },
     200,
     request,
@@ -419,7 +433,6 @@ async function handlePatchAccess(request, env, panelId, { email }) {
   }
 
   const viewData = await getViews(kv, panelId);
-  const { views, viewers } = viewsToApi(viewData);
   const panel = {
     id: panelId,
     publisherEmail: publisher,
@@ -427,8 +440,7 @@ async function handlePatchAccess(request, env, panelId, { email }) {
     allowlist: accessToAllowlist(access),
     publishedAt: record.publishedAt || null,
     publishedLabel: formatPublishedLabel(record.publishedAt),
-    views,
-    viewers,
+    ...viewFields(viewData, email, publisher),
   };
 
   return json({ ok: true, panel, inviteStub }, 200, request, env);
@@ -583,6 +595,7 @@ async function handlePublishPanel(request, env, { email, domain }) {
 
   const path = panelPath(id, name);
   const url = `https://${host}${path}`;
+  const stats = viewFields({ count: 0, byEmail: {} }, email, email);
   return json(
     {
       ok: true,
@@ -595,6 +608,7 @@ async function handlePublishPanel(request, env, { email, domain }) {
       allowlist: accessToAllowlist(access),
       title,
       publishedAt,
+      ...stats,
     },
     201,
     request,

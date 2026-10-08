@@ -10,7 +10,7 @@ Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)
 | Method | Path | Notes |
 |--------|------|--------|
 | GET | `/api/me` | `{ email, idp, domain, host, customHostname, customVerified }` (+ `verify` when pending) — SSO required |
-| GET | `/api/panels?scope=mine\|company` | `{ host, panels: [{ id, title, … }] }` — SSO; `title` fallback `"untitled"`; `viewers[]` only after auth |
+| GET | `/api/panels?scope=mine\|company` | `{ host, panels: [{ id, title, … }] }` — SSO; `title` fallback `"untitled"`; `views` for every listed panel; **`viewers[]` publisher-only** (omitted unless session email === `publisherEmail`) |
 | PATCH | `/api/panels/:id/access` | `{ mode, allowlist[], sendInvite? }` — **publisher only** |
 | PUT | `/api/hosting/subdomain` | `{ slug }` → `{ host }`. `400 reserved_slug` for product/infra names |
 | PUT | `/api/hosting/custom` | `{ hostname }` → claim; TXT `sp-verify=<opaque-token>`; **not served until verified** |
@@ -26,7 +26,7 @@ Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)
 1. Every `/api/*` requires SSO session (401 without cookie / Access JWT).
 2. `PATCH …/access` = publisher only (403 otherwise).
 3. CORS = exact `CONSOLE_ORIGIN` (comma-separated) + `credentials`.
-4. `viewers[]` is PII — only returned on authenticated `/api/panels`.
+4. `viewers[]` is PII — publisher-only (session email equals `publisherEmail`). Colleagues still get `views` + `path`.
 5. Custom domain: reserved via API; Host gate blocks serving until `customVerified`.
 
 Lock A: `mode=company` = email **domain** after SSO (not Workspace/Entra/GitHub Org).
