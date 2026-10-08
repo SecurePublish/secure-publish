@@ -18,13 +18,101 @@
  *   host:custom:{hostname}    → email (owner lock)
  *
  * PanelRecord v1+:
- *   { v, title?, publishedAt, publisherEmail?, access: { mode, emails?, domains? }, html }
+ *   { v, title?, name?, publishedAt, publisherEmail?, access: { mode, emails?, domains? }, html }
+ * `name` is the stored normalized label (or omitted). Panel KV key is the id:
+ *   new panels = 10-char Crockford/RFC4648 base32; legacy = 24-hex.
  */
 
 import { normalizeEmails, normalizeDomains } from "./acl.js";
 import { lookupTxt, txtMatchesVerify } from "./dns.js";
 
-export const PANEL_ID_RE = /^[0-9a-f]{24}$/i;
+/** Lowercase RFC 4648 base32 alphabet (no padding). */
+export const PANEL_CODE_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
+
+/** New panel ids (10-char) or legacy 24-hex. */
+export const PANEL_ID_RE = /^(?:[0-9a-f]{24}|[a-z2-7]{10})$/i;
+
+/**
+ * KV lookup key for a path segment. 10-char codes are lowercased; 24-hex is
+ * unchanged so existing keys keep working exactly as today.
+ * @param {string} key
+ * @returns {string | null}
+ */
+export function lookupPanelId(key) {
+  if (!key || typeof key !== "string") return null;
+  if (/^[0-9a-f]{24}$/i.test(key)) return key;
+  if (/^[a-z2-7]{10}$/i.test(key)) return key.toLowerCase();
+  return null;
+}
+
+/**
+ * 10 random bytes from crypto.getRandomValues, each mapped with `byte & 31`.
+ * @returns {string}
+ */
+export function generatePanelCode() {
+  const bytes = new Uint8Array(10);
+  crypto.getRandomValues(bytes);
+  let out = "";
+  for (let i = 0; i < 10; i++) {
+    out += PANEL_CODE_ALPHABET[bytes[i] & 31];
+  }
+  return out;
+}
+
+/**
+ * Allocate a new 10-char code, retrying on the unlikely KV collision.
+ * @param {{ get: (key: string) => Promise<string | null> }} kv
+ * @returns {Promise<string | null>}
+ */
+export async function allocatePanelCode(kv) {
+  for (let i = 0; i < 8; i++) {
+    const id = generatePanelCode();
+    if ((await kv.get(id)) == null) return id;
+  }
+  return null;
+}
+
+/**
+ * Read-only URL label. Not unique, never reserved.
+ * NFKD + strip diacritics, lowercase, non-[a-z0-9] runs → `-`, trim `-`,
+ * max 60 (hyphen-boundary cut when possible). Empty → null.
+ * @param {unknown} input
+ * @returns {string | null}
+ */
+export function normalizePanelName(input) {
+  if (input == null) return null;
+  let s = String(input)
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!s) return null;
+  if (s.length > 60) {
+    let cut = s.slice(0, 60);
+    const hyphen = cut.lastIndexOf("-");
+    if (hyphen > 0) cut = cut.slice(0, hyphen);
+    s = cut.replace(/-+$/g, "");
+  }
+  s = s.replace(/^-+|-+$/g, "");
+  return s || null;
+}
+
+/**
+ * Canonical path from stored id + normalized name. Nothing from the request.
+ * @param {string} id
+ * @param {string | null | undefined} name
+ */
+export function panelPath(id, name) {
+  const n = typeof name === "string" && name ? name : null;
+  return n ? `/${id}/${n}` : `/${id}`;
+}
+
+/** Stored name or null. */
+export function storedPanelName(record) {
+  const n = record?.name;
+  return typeof n === "string" && n ? n : null;
+}
 
 export function decodeRecord(raw) {
   if (raw == null) return null;
@@ -42,8 +130,9 @@ export function encodeRecord(record) {
 }
 
 export async function getPanel(kv, id) {
-  if (!PANEL_ID_RE.test(id)) return null;
-  const raw = await kv.get(id);
+  const key = lookupPanelId(id);
+  if (!key) return null;
+  const raw = await kv.get(key);
   if (raw == null) return null;
   return decodeRecord(raw);
 }

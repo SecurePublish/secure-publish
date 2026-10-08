@@ -31,6 +31,11 @@ import {
   buildAccessFromPatch,
   indexPanel,
   PANEL_ID_RE,
+  lookupPanelId,
+  allocatePanelCode,
+  normalizePanelName,
+  panelPath,
+  storedPanelName,
   createDeviceCode,
   approveDeviceCode,
   pollDeviceCode,
@@ -109,8 +114,10 @@ export async function handleApiRoutes(request, env) {
   }
 
   const publishPost = url.pathname === "/api/panels" && request.method === "POST";
+  const namePatch =
+    /^\/api\/panels\/[^/]+\/name\/?$/.test(url.pathname) && request.method === "PATCH";
   let bearerEmail = null;
-  if (publishPost) {
+  if (publishPost || namePatch) {
     const header = request.headers.get("authorization") || "";
     const match = header.match(/^Bearer\s+(\S+)/i);
     if (match) {
@@ -123,7 +130,7 @@ export async function handleApiRoutes(request, env) {
   // (1) Every other /api/* requires SSO — no anonymous data.
   // POST /api/panels also accepts the publish credential in Authorization.
   const sso = await requireSsoSession(request, env, { api: true });
-  if (!sso.ok && !(publishPost && bearerEmail)) {
+  if (!sso.ok && !((publishPost || namePatch) && bearerEmail)) {
     return err(sso.body || "unauthorized", sso.status || 401, request, env);
   }
   const user = sso.ok ? sso.user : { email: bearerEmail, provider: "device" };
@@ -156,6 +163,11 @@ export async function handleApiRoutes(request, env) {
   const accessMatch = url.pathname.match(/^\/api\/panels\/([^/]+)\/access\/?$/);
   if (accessMatch && request.method === "PATCH") {
     return handlePatchAccess(request, env, accessMatch[1], { email, domain });
+  }
+
+  const nameMatch = url.pathname.match(/^\/api\/panels\/([^/]+)\/name\/?$/);
+  if (nameMatch && request.method === "PATCH") {
+    return handlePatchName(request, env, nameMatch[1], { email });
   }
 
   if (url.pathname === "/api/hosting/subdomain" && request.method === "PUT") {
@@ -287,9 +299,14 @@ async function handleListPanels(request, env, url, { email, domain }) {
         ? record.title.trim()
         : "untitled";
 
+    const name = storedPanelName(record);
+    const path = panelPath(id, name);
     panels.push({
       id,
       title,
+      name,
+      path,
+      url: host ? `https://${host}${path}` : null,
       publisherEmail: publisherEmail || null,
       mode,
       allowlist: accessToAllowlist(record.access),
@@ -302,6 +319,51 @@ async function handleListPanels(request, env, url, { email, domain }) {
 
   panels.sort((a, b) => String(b.publishedAt || "").localeCompare(String(a.publishedAt || "")));
   return json({ host, panels }, 200, request, env);
+}
+
+async function handlePatchName(request, env, panelId, { email }) {
+  if (!lookupPanelId(panelId)) {
+    return err("not_found", 404, request, env);
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return err("invalid_json", 400, request, env);
+  }
+  if (!body || typeof body !== "object" || !("name" in body)) {
+    return err("invalid_json", 400, request, env);
+  }
+
+  const kv = env.PANELS;
+  const id = lookupPanelId(panelId);
+  const record = await getPanel(kv, id);
+  if (!record) return err("not_found", 404, request, env);
+
+  const publisher = (record.publisherEmail || "").trim().toLowerCase();
+  if (!publisher || publisher !== email) {
+    return err("forbidden", 403, request, env);
+  }
+
+  const normalized = normalizePanelName(body.name);
+  if (normalized) record.name = normalized;
+  else delete record.name;
+  await putPanel(kv, id, record);
+
+  const host = await resolveHost(kv, email, env);
+  const name = storedPanelName(record);
+  const path = panelPath(id, name);
+  return json(
+    {
+      id,
+      name,
+      path,
+      url: host ? `https://${host}${path}` : null,
+    },
+    200,
+    request,
+    env
+  );
 }
 
 async function handlePatchAccess(request, env, panelId, { email }) {
@@ -439,11 +501,6 @@ async function handleRevokePublish(request, env) {
 /** Customer publish cap. Operator KV path is not this route. */
 const MAX_HTML_BYTES = Math.floor(1.5 * 1024 * 1024);
 
-function newPanelId() {
-  const bytes = new Uint8Array(12);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 function utf8ByteLength(value) {
   return new TextEncoder().encode(value).length;
@@ -451,7 +508,7 @@ function utf8ByteLength(value) {
 
 /**
  * POST /api/panels — signed-in user publishes HTML. No Cloudflare API token.
- * Body: { html, title?, to?: string | string[] }
+ * Body: { html, title?, name?, to?: string | string[] }
  * Default access = company (session email domain).
  */
 async function handlePublishPanel(request, env, { email, domain }) {
@@ -507,7 +564,10 @@ async function handlePublishPanel(request, env, { email, domain }) {
     title = body.title.trim().replace(/\s+/g, " ").slice(0, 200);
   }
 
-  const id = newPanelId();
+  const id = await allocatePanelCode(env.PANELS);
+  if (!id) return err("id_collision", 500, request, env);
+
+  const name = normalizePanelName(body.name);
   const publishedAt = new Date().toISOString();
   const record = {
     v: 1,
@@ -517,15 +577,19 @@ async function handlePublishPanel(request, env, { email, domain }) {
     access,
     html,
   };
+  if (name) record.name = name;
   await putPanel(env.PANELS, id, record);
   await indexPanel(env.PANELS, id, email, access);
 
-  const url = `https://${host}/${id}`;
+  const path = panelPath(id, name);
+  const url = `https://${host}${path}`;
   return json(
     {
       ok: true,
       id,
       url,
+      path,
+      name,
       host,
       mode: accessToApiMode(access),
       allowlist: accessToAllowlist(access),

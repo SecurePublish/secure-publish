@@ -15,14 +15,31 @@
 import { requireSsoSession, handleAuthRoutes, ssoMode } from "./sso.js";
 import { checkPanelAccess, accessDeniedBody } from "./acl.js";
 import { handleApiRoutes } from "./api.js";
-import { decodeRecord, recordView, getTenant, PANEL_ID_RE } from "./kv.js";
+import {
+  decodeRecord,
+  recordView,
+  getTenant,
+  lookupPanelId,
+  panelPath,
+  storedPanelName,
+} from "./kv.js";
+
+const PANEL_404_BODY = "Not found — invalid or unknown panel id.";
+
+function panelHeaders(extra = {}) {
+  return {
+    "referrer-policy": "no-referrer",
+    "x-robots-tag": "noindex",
+    ...extra,
+  };
+}
 
 async function resolvePanel(key, panels) {
-  if (!key || typeof key !== "string") return { ok: false };
-  if (!PANEL_ID_RE.test(key)) return { ok: false };
-  const raw = await panels.get(key);
+  const id = lookupPanelId(key);
+  if (!id) return { ok: false };
+  const raw = await panels.get(id);
   if (raw == null) return { ok: false };
-  return { ok: true, record: decodeRecord(raw) };
+  return { ok: true, id, record: decodeRecord(raw) };
 }
 
 /** Normalize Host header (or URL hostname). */
@@ -163,9 +180,12 @@ export default {
 
     const hostGate = await assertHostAllowed(request, env);
     if (!hostGate.ok) {
+      const partsEarly = url.pathname.split("/").filter(Boolean);
+      const headers = { "content-type": "text/plain; charset=utf-8" };
+      if (partsEarly.length) Object.assign(headers, panelHeaders());
       return new Response(hostGate.body || "Forbidden\n", {
         status: hostGate.status || 403,
-        headers: { "content-type": "text/plain; charset=utf-8" },
+        headers,
       });
     }
 
@@ -194,12 +214,11 @@ export default {
       );
     }
 
-    const panelId = parts[0];
-    const panel = await resolvePanel(panelId, env.PANELS);
+    const panel = await resolvePanel(parts[0], env.PANELS);
     if (!panel.ok) {
-      return new Response("Not found — invalid or unknown panel id.", {
+      return new Response(PANEL_404_BODY, {
         status: 404,
-        headers: { "content-type": "text/plain; charset=utf-8" },
+        headers: panelHeaders({ "content-type": "text/plain; charset=utf-8" }),
       });
     }
 
@@ -207,18 +226,23 @@ export default {
     if (!bind.ok) {
       return new Response(bind.body || "Not found — host not bound.\n", {
         status: bind.status || 404,
-        headers: { "content-type": "text/plain; charset=utf-8" },
+        headers: panelHeaders({ "content-type": "text/plain; charset=utf-8" }),
       });
     }
 
     const sso = await requireSsoSession(request, env);
     if (!sso.ok) {
       if (sso.redirectUrl) {
-        return Response.redirect(new URL(sso.redirectUrl, url.origin).toString(), 302);
+        return new Response(null, {
+          status: 302,
+          headers: panelHeaders({
+            location: new URL(sso.redirectUrl, url.origin).toString(),
+          }),
+        });
       }
       return new Response(sso.body || "Unauthorized — SSO required.\n", {
         status: sso.status || 403,
-        headers: { "content-type": "text/plain; charset=utf-8" },
+        headers: panelHeaders({ "content-type": "text/plain; charset=utf-8" }),
       });
     }
 
@@ -231,26 +255,40 @@ export default {
     if (!acl.ok) {
       return new Response(accessDeniedBody(acl.reason), {
         status: 403,
-        headers: {
+        headers: panelHeaders({
           "content-type": "text/plain; charset=utf-8",
           "x-secure-publish-acl": acl.reason || "denied",
-        },
+        }),
+      });
+    }
+
+    const storedName = storedPanelName(panel.record);
+    const rest = parts.slice(1);
+    const nameOk =
+      rest.length === 0 ||
+      (Boolean(storedName) && rest.length === 1 && rest[0] === storedName);
+    if (!nameOk) {
+      return new Response(null, {
+        status: 301,
+        headers: panelHeaders({
+          location: panelPath(panel.id, storedName),
+          "cache-control": "private, no-store",
+        }),
       });
     }
 
     // Best-effort view analytics (PII stored server-side; API exposes only to SSO tenant).
     try {
-      await recordView(env.PANELS, panelId, sso.user?.email);
+      await recordView(env.PANELS, panel.id, sso.user?.email);
     } catch {
       /* non-fatal */
     }
 
-    const headers = {
+    const headers = panelHeaders({
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
-      "x-robots-tag": "noindex, nofollow",
       "x-secure-publish": "sso",
-    };
+    });
     if (sso.user?.email) {
       headers["x-secure-publish-user"] = sso.user.email;
     }

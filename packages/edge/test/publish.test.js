@@ -167,7 +167,9 @@ describe("POST /api/panels", () => {
     );
     assert.equal(res.status, 201);
     const body = await res.json();
-    assert.match(body.id, /^[0-9a-f]{24}$/);
+    assert.match(body.id, /^[abcdefghijklmnopqrstuvwxyz234567]{10}$/);
+    assert.equal(body.path, `/${body.id}`);
+    assert.equal(body.name, null);
     assert.equal(body.url, `https://wise.securepublish.work/${body.id}`);
     assert.equal(body.host, "wise.securepublish.work");
     assert.equal(body.mode, "company");
