@@ -39,11 +39,9 @@ User prompts this skill handles:
 
 Say only these lines about sign-in and publish. Do not explain the mechanism.
 
-If this machine is not signed in yet, run `npx --yes github:clovistx/secure-publish login` and wait.
+If this machine is not signed in yet, run `npx --yes github:clovistx/secure-publish login` in the background. Do not wait for it to finish. As soon as it prints the code, say exactly (PT):
 
 You MUST show the `user_code` from the CLI output to the user (replace `{user_code}`). Do not invent a code.
-
-Then say exactly (PT):
 
 > Vou abrir o login. Na página que abrir, entre com a conta da empresa e digite o código {user_code}.
 
@@ -51,7 +49,7 @@ EN:
 
 > I'll open the sign-in page. Sign in with your company account and enter the code {user_code}.
 
-When it finishes, say exactly:
+When the login command finishes, say exactly:
 
 > Conta ligada. Publicando em {host}, aberto pra empresa.
 
