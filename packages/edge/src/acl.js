@@ -15,6 +15,17 @@ export const PUBLIC_EMAIL_DOMAINS = [
   "msn.com",
   "yahoo.com",
   "yahoo.com.br",
+  "yahoo.co.uk",
+  "yahoo.co.jp",
+  "yahoo.fr",
+  "yahoo.de",
+  "yahoo.it",
+  "yahoo.es",
+  "yahoo.ca",
+  "yahoo.com.au",
+  "yahoo.com.mx",
+  "yahoo.com.ar",
+  "yahoo.co.in",
   "icloud.com",
   "me.com",
   "mac.com",
@@ -22,8 +33,12 @@ export const PUBLIC_EMAIL_DOMAINS = [
   "proton.me",
   "protonmail.com",
   "gmx.com",
+  "gmx.net",
+  "gmx.de",
   "zoho.com",
+  "zohomail.com",
   "yandex.com",
+  "yandex.ru",
   "mail.com",
   "uol.com.br",
   "bol.com.br",
@@ -37,16 +52,47 @@ const PUBLIC_EMAIL_DOMAIN_SET = new Set(
 );
 
 /**
+ * Lowercase, trim, punycode-safe registrable host of an email or bare domain.
+ * Uses `new URL('https://'+host).hostname` so IDN round-trips to ASCII.
+ */
+export function normalizeEmailDomain(emailOrDomain) {
+  const raw = String(emailOrDomain || "")
+    .trim()
+    .toLowerCase();
+  if (!raw) return "";
+  const host = raw.includes("@") ? raw.split("@").pop() : raw.replace(/^@/, "");
+  const domain = String(host || "")
+    .trim()
+    .replace(/\.+$/, "");
+  if (!domain) return "";
+  try {
+    return new URL("https://" + domain).hostname.toLowerCase().replace(/\.+$/, "");
+  } catch {
+    return domain;
+  }
+}
+
+/**
  * Exact domain match against PUBLIC_EMAIL_DOMAINS (case-insensitive).
  * Accepts an email (`User@GMAIL.com`) or a bare domain. Subdomains are not matched.
  */
 export function isPublicEmailDomain(emailOrDomain) {
-  const raw = String(emailOrDomain || "")
-    .trim()
-    .toLowerCase();
-  if (!raw) return false;
-  const domain = raw.includes("@") ? raw.split("@")[1] : raw.replace(/^@/, "");
+  const domain = normalizeEmailDomain(emailOrDomain);
   return Boolean(domain) && PUBLIC_EMAIL_DOMAIN_SET.has(domain);
+}
+
+/**
+ * Signup / app-login blocklist. Exact public mailbox plus subdomains of those
+ * providers (mail.yahoo.com, users.noreply.github.com and children).
+ */
+export function isBlockedSignupDomain(emailOrDomain) {
+  const domain = normalizeEmailDomain(emailOrDomain);
+  if (!domain) return true;
+  if (PUBLIC_EMAIL_DOMAIN_SET.has(domain)) return true;
+  for (const blocked of PUBLIC_EMAIL_DOMAIN_SET) {
+    if (domain.endsWith(`.${blocked}`)) return true;
+  }
+  return false;
 }
 
 export function normalizeEmails(emails) {
@@ -119,7 +165,7 @@ export function checkPanelAccess(user, access, env, publisherEmail) {
     return { ok: false, reason: "public_company_domain" };
   }
   if (!domains.length) return { ok: false, reason: "no_company_domains" };
-  const domain = email.split("@")[1];
+  const domain = normalizeEmailDomain(email);
   if (!domain || !domains.includes(domain)) {
     return { ok: false, reason: "domain_not_allowed" };
   }

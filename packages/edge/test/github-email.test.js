@@ -1,6 +1,5 @@
 /**
- * GitHub SSO: pick a verified /user/emails address whose domain is allowed,
- * not merely the primary verified email (often a personal gmail).
+ * GitHub SSO: pick a verified /user/emails work address, not a personal primary.
  */
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
@@ -9,6 +8,7 @@ import {
   selectGitHubEmail,
   readSessionCookie,
   COOKIE_NAME,
+  MICROSOFT_DOMAIN_UNVERIFIED,
 } from "../src/sso.js";
 
 const APP = "https://app.securepublish.work";
@@ -46,8 +46,8 @@ function encodeState(obj) {
   return btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-describe("selectGitHubEmail — verified + exact allowed domain", () => {
-  it("picks the first verified allowed-domain email over a primary gmail", () => {
+describe("selectGitHubEmail — verified non-personal work domain", () => {
+  it("picks the verified work email over a primary gmail", () => {
     const list = emails([
       { email: "ana@gmail.com", primary: true, verified: true },
       { email: "ana@wises.com.br", verified: true },
@@ -55,12 +55,12 @@ describe("selectGitHubEmail — verified + exact allowed domain", () => {
     assert.equal(selectGitHubEmail(list, env()), "ana@wises.com.br");
   });
 
-  it("falls back to primary verified gmail when the work email is unverified", () => {
+  it("returns null when the only verified address is personal", () => {
     const list = emails([
       { email: "ana@gmail.com", primary: true, verified: true },
       { email: "ana@wises.com.br", verified: false },
     ]);
-    assert.equal(selectGitHubEmail(list, env()), "ana@gmail.com");
+    assert.equal(selectGitHubEmail(list, env()), null);
   });
 
   it("never selects an entry that is not verified: true", () => {
@@ -69,29 +69,29 @@ describe("selectGitHubEmail — verified + exact allowed domain", () => {
       { email: "ana@wises.com.br", verified: 1 },
       { email: "other@wises.com.br" },
     ]);
-    assert.equal(selectGitHubEmail(list, env()), "ana@gmail.com");
+    assert.equal(selectGitHubEmail(list, env()), null);
   });
 
-  it("picks the first allowed verified email in GitHub list order, not primary", () => {
+  it("prefers a qualifying primary over an earlier qualifying address", () => {
     const list = emails([
       { email: "first@wises.com.br", verified: true },
       { email: "second@wises.com.br", primary: true, verified: true },
     ]);
-    assert.equal(selectGitHubEmail(list, env()), "first@wises.com.br");
+    assert.equal(selectGitHubEmail(list, env()), "second@wises.com.br");
   });
 
-  it("matches an uppercase OAUTH_ALLOWED_DOMAINS entry (WISES.COM.BR)", () => {
+  it("picks work email even when OAUTH_ALLOWED_DOMAINS is a different company", () => {
     const list = emails([
       { email: "ana@gmail.com", primary: true, verified: true },
-      { email: "ana@wises.com.br", verified: true },
+      { email: "clovis@furk.tech", verified: true },
     ]);
     assert.equal(
       selectGitHubEmail(list, env({ OAUTH_ALLOWED_DOMAINS: "WISES.COM.BR" })),
-      "ana@wises.com.br"
+      "clovis@furk.tech"
     );
   });
 
-  it("matches an uppercase email domain against the allowlist", () => {
+  it("matches an uppercase email domain", () => {
     const list = emails([
       { email: "ana@gmail.com", primary: true, verified: true },
       { email: "ana@WISES.COM.BR", verified: true },
@@ -99,68 +99,56 @@ describe("selectGitHubEmail — verified + exact allowed domain", () => {
     assert.equal(selectGitHubEmail(list, env()), "ana@WISES.COM.BR");
   });
 
-  it("does not match lookalike wises.com.br.evil.com", () => {
+  it("treats a lookalike domain as its own work domain (not gmail)", () => {
     const list = emails([
       { email: "ana@gmail.com", primary: true, verified: true },
       { email: "ana@wises.com.br.evil.com", verified: true },
     ]);
-    assert.equal(selectGitHubEmail(list, env()), "ana@gmail.com");
+    assert.equal(selectGitHubEmail(list, env()), "ana@wises.com.br.evil.com");
   });
 
-  it("does not match lookalike evilwises.com.br", () => {
+  it("treats evilwises.com.br as a work domain", () => {
     const list = emails([
       { email: "ana@gmail.com", primary: true, verified: true },
       { email: "ana@evilwises.com.br", verified: true },
     ]);
-    assert.equal(selectGitHubEmail(list, env()), "ana@gmail.com");
+    assert.equal(selectGitHubEmail(list, env()), "ana@evilwises.com.br");
   });
 
-  it("keeps primary verified when OAUTH_ALLOWED_DOMAINS is unset", () => {
+  it("picks work email when OAUTH_ALLOWED_DOMAINS is unset", () => {
     const list = emails([
       { email: "ana@gmail.com", primary: true, verified: true },
       { email: "ana@wises.com.br", verified: true },
     ]);
     const { OAUTH_ALLOWED_DOMAINS: _, ...noDomains } = env();
-    assert.equal(selectGitHubEmail(list, noDomains), "ana@gmail.com");
+    assert.equal(selectGitHubEmail(list, noDomains), "ana@wises.com.br");
   });
 
-  it("keeps primary verified when OAUTH_ALLOWED_DOMAINS is empty", () => {
+  it("picks work email when OAUTH_ALLOWED_DOMAINS is empty", () => {
     const list = emails([
       { email: "ana@gmail.com", primary: true, verified: true },
       { email: "ana@wises.com.br", verified: true },
     ]);
     assert.equal(
       selectGitHubEmail(list, env({ OAUTH_ALLOWED_DOMAINS: "" })),
-      "ana@gmail.com"
+      "ana@wises.com.br"
     );
   });
 
-  it("never treats users.noreply.github.com as an allowed match even if listed", () => {
+  it("never treats users.noreply.github.com as a work domain", () => {
     const list = emails([
       { email: "ana@gmail.com", primary: true, verified: true },
       { email: "12345+ana@users.noreply.github.com", verified: true },
     ]);
-    assert.equal(
-      selectGitHubEmail(
-        list,
-        env({ OAUTH_ALLOWED_DOMAINS: "users.noreply.github.com,wises.com.br" })
-      ),
-      "ana@gmail.com"
-    );
+    assert.equal(selectGitHubEmail(list, env()), null);
   });
 
-  it("never treats a subdomain of users.noreply.github.com as an allowed match", () => {
+  it("never treats a subdomain of users.noreply.github.com as a work domain", () => {
     const list = emails([
       { email: "ana@gmail.com", primary: true, verified: true },
       { email: "ana@mail.users.noreply.github.com", verified: true },
     ]);
-    assert.equal(
-      selectGitHubEmail(
-        list,
-        env({ OAUTH_ALLOWED_DOMAINS: "mail.users.noreply.github.com,wises.com.br" })
-      ),
-      "ana@gmail.com"
-    );
+    assert.equal(selectGitHubEmail(list, env()), null);
   });
 
   it("still prefers a real work email when a GitHub noreply address is also present", () => {
@@ -236,16 +224,24 @@ describe("GitHub OAuth callback uses selected email", () => {
     };
   }
 
-  function mockIdp({ tokenUrlPart, userUrlPart, profile }) {
+  function unsignedJwt(payload) {
+    const enc = (obj) => Buffer.from(JSON.stringify(obj)).toString("base64url");
+    return `${enc({ alg: "none", typ: "JWT" })}.${enc(payload)}.`;
+  }
+
+  function mockIdp({ tokenUrlPart, userUrlPart, profile, tokenJson }) {
     globalThis.fetch = async (url) => {
       const u = String(url);
       if (u.includes(tokenUrlPart)) {
-        return new Response(JSON.stringify({ access_token: "tok" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify(tokenJson || { access_token: "tok" }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }
+        );
       }
-      if (u.includes(userUrlPart)) {
+      if (userUrlPart && u.includes(userUrlPart)) {
         return new Response(JSON.stringify(profile), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -325,19 +321,24 @@ describe("GitHub OAuth callback uses selected email", () => {
     mockIdp({
       tokenUrlPart: "oauth2.googleapis.com/token",
       userUrlPart: "googleapis.com/oauth2/v2/userinfo",
-      profile: { email: "ana@WISES.COM.BR" },
+      profile: { email: "ana@WISES.COM.BR", verified_email: true },
     });
     const res = await callback("google", testEnv);
     assert.equal(res.status, 302);
     assert.equal(await sessionEmail(res, testEnv), "ana@wises.com.br");
   });
 
-  it("lowercases a Microsoft email before minting the session", async () => {
+  it("lowercases a Microsoft email from the id_token before minting the session", async () => {
     const testEnv = env();
     mockIdp({
       tokenUrlPart: "login.microsoftonline.com",
-      userUrlPart: "graph.microsoft.com/v1.0/me",
-      profile: { mail: "ana@WISES.COM.BR" },
+      tokenJson: {
+        access_token: "tok",
+        id_token: unsignedJwt({
+          email: "ana@WISES.COM.BR",
+          xms_edov: true,
+        }),
+      },
     });
     const res = await callback("microsoft", testEnv);
     assert.equal(res.status, 302);
@@ -412,18 +413,38 @@ describe("GitHub OAuth callback uses selected email", () => {
     mockIdp({
       tokenUrlPart: "oauth2.googleapis.com/token",
       userUrlPart: "googleapis.com/oauth2/v2/userinfo",
-      profile: { email: "ana@gmail.com" },
+      profile: { email: "ana@gmail.com", verified_email: true },
     });
     const res = await callback("google", env());
     assert.equal(res.status, 403);
     assert.equal(await res.text(), GOOGLE_MS_DENIED);
   });
 
-  it("keeps the existing Microsoft domain-denied text", async () => {
+  it("denies Microsoft when xms_edov is missing even for a work domain", async () => {
     mockIdp({
       tokenUrlPart: "login.microsoftonline.com",
-      userUrlPart: "graph.microsoft.com/v1.0/me",
-      profile: { mail: "ana@gmail.com" },
+      tokenJson: {
+        access_token: "tok",
+        id_token: unsignedJwt({
+          email: "ana@wises.com.br",
+          upn: "ana@wises.com.br",
+          preferred_username: "ana@wises.com.br",
+        }),
+      },
+    });
+    const res = await callback("microsoft", env());
+    assert.equal(res.status, 403);
+    assert.match(await res.text(), new RegExp(MICROSOFT_DOMAIN_UNVERIFIED));
+    assert.equal(sessionCookieLines(res).length, 0);
+  });
+
+  it("denies Microsoft personal mail even when xms_edov is true", async () => {
+    mockIdp({
+      tokenUrlPart: "login.microsoftonline.com",
+      tokenJson: {
+        access_token: "tok",
+        id_token: unsignedJwt({ email: "ana@gmail.com", xms_edov: true }),
+      },
     });
     const res = await callback("microsoft", env());
     assert.equal(res.status, 403);

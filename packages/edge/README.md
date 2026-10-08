@@ -37,7 +37,7 @@ Lock A: `mode=company` = email **domain** after SSO (not Workspace/Entra/GitHub 
 
 ### SSO
 
-GitHub OAuth uses `/user/emails` (`user:email` scope) only — never the public `/user` email. Only `verified: true` addresses; the first whose domain is an exact (case-insensitive) member of `OAUTH_ALLOWED_DOMAINS` is chosen; otherwise the primary verified email. If `/user/emails` errors or has no verified entry, login is denied (403, no session). `users.noreply.github.com` (and subdomains) never count as an allowed match. Session emails are stored lowercase for every IdP.
+Signup / app login uses a **blocklist** of personal/free mailbox domains (`PUBLIC_EMAIL_DOMAINS` in `acl.js`), not `OAUTH_ALLOWED_DOMAINS`. First verified work-email user of a domain creates `org:{domain}`; later users join that org. GitHub OAuth uses `/user/emails` (`user:email` scope) only — never the public `/user` email. Only `verified: true` non-personal addresses; primary if it qualifies, else the first qualifying. If `/user/emails` errors or has no qualifying entry, login is denied (403, no session). `users.noreply.github.com` (and subdomains) never qualify. Google requires `email_verified` / `verified_email`. Microsoft accepts an email only from the ID token when `xms_edov === true` (never `email`/`upn`/`preferred_username` alone). Session emails are stored lowercase for every IdP.
 
 **Known risk:** GitHub does not re-verify emails, so someone who left the company but keeps a verified @company email on GitHub can still sign in via GitHub even after their Google account is disabled. Accepted for now given the small audience; mitigation if needed later is requiring Google for company mode.
 

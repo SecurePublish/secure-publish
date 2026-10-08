@@ -13,7 +13,7 @@
  */
 
 import { requireSsoSession, ssoMode, oauthCallbackOrigin, consoleOrigins } from "./sso.js";
-import { isPublicEmailDomain, normalizeDomains } from "./acl.js";
+import { isPublicEmailDomain, normalizeDomains, normalizeEmailDomain } from "./acl.js";
 import {
   getPanel,
   putPanel,
@@ -263,7 +263,7 @@ export async function handleApiRoutes(request, env) {
   if (!email || !email.includes("@")) {
     return err("missing_email", 403, request, env);
   }
-  domain = email.split("@")[1];
+  domain = normalizeEmailDomain(email);
 
   if (url.pathname === "/api/me" && request.method === "GET") {
     return handleMe(request, env, { email, domain, idp });
@@ -402,7 +402,7 @@ async function handleListPanels(request, env, url, { email, domain }) {
       // company scope: company|org mode only; publisher must share domain
       if (mode !== "company") continue;
       const pubDomain = publisherEmail.includes("@")
-        ? publisherEmail.split("@")[1]
+        ? normalizeEmailDomain(publisherEmail)
         : (record.access?.domains || [])[0];
       const companyDomains = normalizeDomains(
         record.access?.domains?.length

@@ -9,6 +9,8 @@ import { mintSessionCookie } from "../src/sso.js";
 import {
   PUBLIC_EMAIL_DOMAINS,
   isPublicEmailDomain,
+  isBlockedSignupDomain,
+  normalizeEmailDomain,
   checkPanelAccess,
 } from "../src/acl.js";
 
@@ -23,6 +25,17 @@ const SPEC_DOMAINS = [
   "msn.com",
   "yahoo.com",
   "yahoo.com.br",
+  "yahoo.co.uk",
+  "yahoo.co.jp",
+  "yahoo.fr",
+  "yahoo.de",
+  "yahoo.it",
+  "yahoo.es",
+  "yahoo.ca",
+  "yahoo.com.au",
+  "yahoo.com.mx",
+  "yahoo.com.ar",
+  "yahoo.co.in",
   "icloud.com",
   "me.com",
   "mac.com",
@@ -30,8 +43,12 @@ const SPEC_DOMAINS = [
   "proton.me",
   "protonmail.com",
   "gmx.com",
+  "gmx.net",
+  "gmx.de",
   "zoho.com",
+  "zohomail.com",
   "yandex.com",
+  "yandex.ru",
   "mail.com",
   "uol.com.br",
   "bol.com.br",
@@ -139,6 +156,33 @@ describe("PUBLIC_EMAIL_DOMAINS", () => {
   });
 });
 
+describe("normalizeEmailDomain / signup blocklist", () => {
+  it("lowercases, trims, and strips a trailing dot", () => {
+    assert.equal(normalizeEmailDomain("  Ana@WISES.COM.BR. "), "wises.com.br");
+  });
+
+  it("punycode-encodes an IDN email domain", () => {
+    assert.equal(normalizeEmailDomain("user@bücher.example"), "xn--bcher-kva.example");
+  });
+
+  it("blocks signup for listed providers and their subdomains", () => {
+    assert.equal(isBlockedSignupDomain("ana@gmail.com"), true);
+    assert.equal(isBlockedSignupDomain("ana@mail.yahoo.com"), true);
+    assert.equal(isBlockedSignupDomain("x@users.noreply.github.com"), true);
+    assert.equal(isBlockedSignupDomain("x@mail.users.noreply.github.com"), true);
+    assert.equal(isBlockedSignupDomain("ana@yahoo.co.uk"), true);
+    assert.equal(isBlockedSignupDomain("ana@gmx.de"), true);
+    assert.equal(isBlockedSignupDomain("ana@zohomail.com"), true);
+  });
+
+  it("does not block company domains (including lookalikes of public providers)", () => {
+    assert.equal(isBlockedSignupDomain("clovis@furk.tech"), false);
+    assert.equal(isBlockedSignupDomain("ana@wises.com.br"), false);
+    assert.equal(isBlockedSignupDomain("user@notmail.com"), false);
+    assert.equal(isBlockedSignupDomain("user@evilgmail.com"), false);
+  });
+});
+
 describe("checkPanelAccess — old public-domain company panels", () => {
   const access = { mode: "company", domains: ["gmail.com"] };
   const publisher = "ana@gmail.com";
@@ -182,7 +226,7 @@ describe("checkPanelAccess — old public-domain company panels", () => {
 });
 
 describe("API — public email domain", () => {
-  it("GET /api/me returns publicDomain true for Gmail (case-insensitive)", async () => {
+  it("GET /api/me denies a Gmail session at the signup blocklist (stable error)", async () => {
     const env = oauthEnv(memoryKv());
     const cookie = await sessionCookie(env, "User@GMAIL.com");
     const res = await worker.fetch(
@@ -191,11 +235,8 @@ describe("API — public email domain", () => {
       }),
       env
     );
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.email, "user@gmail.com");
-    assert.equal(body.domain, "gmail.com");
-    assert.equal(body.publicDomain, true);
+    assert.equal(res.status, 403);
+    assert.deepEqual(await res.json(), { error: "company_requires_work_domain" });
   });
 
   it("GET /api/me returns publicDomain false for wises.com.br", async () => {
@@ -213,7 +254,7 @@ describe("API — public email domain", () => {
     assert.equal(body.domain, "wises.com.br");
   });
 
-  it("POST company from public domain with no host is still 400 (not 409), KV unchanged", async () => {
+  it("POST company from public domain is 403 at the blocklist, KV unchanged", async () => {
     const panels = memoryKv();
     const env = oauthEnv(panels);
     const cookie = await sessionCookie(env, "ana@gmail.com");
@@ -226,12 +267,12 @@ describe("API — public email domain", () => {
       }),
       env
     );
-    assert.equal(res.status, 400);
+    assert.equal(res.status, 403);
     assert.deepEqual(await res.json(), { error: "company_requires_work_domain" });
     assert.equal(kvDump(panels), before);
   });
 
-  it("POST /api/panels company mode from public domain → 400, KV unchanged", async () => {
+  it("POST /api/panels company mode from public domain → 403, KV unchanged", async () => {
     const panels = memoryKv({
       "tenant:user:user@gmail.com": JSON.stringify({
         email: "user@gmail.com",
@@ -252,12 +293,12 @@ describe("API — public email domain", () => {
       }),
       env
     );
-    assert.equal(res.status, 400);
+    assert.equal(res.status, 403);
     assert.deepEqual(await res.json(), { error: "company_requires_work_domain" });
     assert.equal(kvDump(panels), before);
   });
 
-  it("POST /api/panels with --to allowlist works for public-domain accounts", async () => {
+  it("POST /api/panels with --to allowlist is also blocked for public-domain accounts", async () => {
     const panels = memoryKv({
       "tenant:user:ana@gmail.com": JSON.stringify({
         email: "ana@gmail.com",
@@ -268,6 +309,7 @@ describe("API — public email domain", () => {
     });
     const env = oauthEnv(panels);
     const cookie = await sessionCookie(env, "ana@gmail.com");
+    const before = kvDump(panels);
     const res = await worker.fetch(
       new Request("https://app.securepublish.work/api/panels", {
         method: "POST",
@@ -279,16 +321,12 @@ describe("API — public email domain", () => {
       }),
       env
     );
-    assert.equal(res.status, 201);
-    const body = await res.json();
-    assert.equal(body.mode, "allowlist");
-    assert.deepEqual(body.allowlist, ["bob@gmail.com", "ana@gmail.com"]);
-    const stored = JSON.parse(panels._store.get(body.id));
-    assert.equal(stored.publisherEmail, "ana@gmail.com");
-    assert.equal(stored.access.mode, "allowlist");
+    assert.equal(res.status, 403);
+    assert.deepEqual(await res.json(), { error: "company_requires_work_domain" });
+    assert.equal(kvDump(panels), before);
   });
 
-  it("POST company from user@foo.gmail.com (not exact list match) is allowed", async () => {
+  it("POST company from user@foo.gmail.com (subdomain of a blocked provider) is denied", async () => {
     const panels = memoryKv({
       "tenant:user:user@foo.gmail.com": JSON.stringify({
         email: "user@foo.gmail.com",
@@ -307,14 +345,11 @@ describe("API — public email domain", () => {
       }),
       env
     );
-    assert.equal(res.status, 201);
-    const body = await res.json();
-    assert.equal(body.mode, "company");
-    const stored = JSON.parse(panels._store.get(body.id));
-    assert.deepEqual(stored.access.domains, ["foo.gmail.com"]);
+    assert.equal(res.status, 403);
+    assert.deepEqual(await res.json(), { error: "company_requires_work_domain" });
   });
 
-  it("PATCH mode:company from public-domain publisher → 400, KV unchanged", async () => {
+  it("PATCH mode:company from public-domain publisher → 403, KV unchanged", async () => {
     const record = {
       v: 1,
       title: "Allow",
@@ -338,14 +373,14 @@ describe("API — public email domain", () => {
       }),
       env
     );
-    assert.equal(res.status, 400);
+    assert.equal(res.status, 403);
     assert.deepEqual(await res.json(), { error: "company_requires_work_domain" });
     assert.equal(kvDump(panels), before);
     const stored = JSON.parse(panels._store.get(GMAIL_ALLOW_ID));
     assert.equal(stored.access.mode, "allowlist");
   });
 
-  it("PATCH allowlist still works for public-domain publishers", async () => {
+  it("PATCH allowlist is also blocked for public-domain publishers", async () => {
     const panels = memoryKv({
       [GMAIL_ALLOW_ID]: JSON.stringify({
         v: 1,
@@ -369,13 +404,11 @@ describe("API — public email domain", () => {
       }),
       env
     );
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.panel.mode, "allowlist");
-    assert.deepEqual(body.panel.allowlist, ["ana@gmail.com", "cara@gmail.com"]);
+    assert.equal(res.status, 403);
+    assert.deepEqual(await res.json(), { error: "company_requires_work_domain" });
   });
 
-  it("old public-domain company panel: 403 for same-domain viewer, 200 for publisher", async () => {
+  it("old public-domain company panel: 403 for viewer and publisher (blocklist)", async () => {
     const panels = memoryKv({
       [GMAIL_COMPANY_ID]: JSON.stringify({
         v: 1,
@@ -408,11 +441,14 @@ describe("API — public email domain", () => {
       }),
       env
     );
-    assert.equal(publisher.status, 200);
-    assert.equal(await publisher.text(), PANEL_HTML);
+    assert.equal(publisher.status, 403);
+    assert.equal(
+      await publisher.text(),
+      "Acesso negado: domínio de e-mail não autorizado.\n"
+    );
   });
 
-  it("GET /api/panels?scope=company does not list public-domain company panels", async () => {
+  it("GET /api/panels with a Gmail session is denied at the blocklist", async () => {
     const panels = memoryKv({
       [GMAIL_COMPANY_ID]: JSON.stringify({
         v: 1,
@@ -441,12 +477,8 @@ describe("API — public email domain", () => {
       }),
       env
     );
-    assert.equal(other.status, 200);
-    const otherBody = await other.json();
-    assert.equal(
-      otherBody.panels.find((p) => p.id === GMAIL_COMPANY_ID),
-      undefined
-    );
+    assert.equal(other.status, 403);
+    assert.deepEqual(await other.json(), { error: "company_requires_work_domain" });
 
     const pubCompany = await worker.fetch(
       new Request("https://app.securepublish.work/api/panels?scope=company", {
@@ -454,11 +486,7 @@ describe("API — public email domain", () => {
       }),
       env
     );
-    const pubCompanyBody = await pubCompany.json();
-    assert.equal(
-      pubCompanyBody.panels.find((p) => p.id === GMAIL_COMPANY_ID),
-      undefined
-    );
+    assert.equal(pubCompany.status, 403);
 
     const mine = await worker.fetch(
       new Request("https://app.securepublish.work/api/panels?scope=mine", {
@@ -466,8 +494,7 @@ describe("API — public email domain", () => {
       }),
       env
     );
-    const mineBody = await mine.json();
-    assert.ok(mineBody.panels.find((p) => p.id === GMAIL_COMPANY_ID));
+    assert.equal(mine.status, 403);
   });
 });
 
