@@ -66,7 +66,15 @@ async function assertHostAllowed(request, env) {
   return { ok: true };
 }
 
-/** Reserved product hosts — wildcard Worker must not treat these as panels. */
+/**
+ * Product hosts the Worker treats as its own (Pages proxy + skip panel
+ * host-owner binding). Keep this list NARROW: only app, www, and the apex.
+ *
+ * Claim-blocked slugs live separately in kv.js (CLAIM_RESERVED_SLUGS).
+ * Widening this set to api/admin/auth/login/cname would make
+ * assertPanelHostBinding return ok:true and serve any panel on those hosts
+ * without checking host:sub:{slug}. Unowned infra hosts must 404 fail-closed.
+ */
 const PAGES_ORIGIN = {
   "app.securepublish.work": "https://secure-publish-app.pages.dev",
   "www.securepublish.work": "https://secure-publish-landing.pages.dev",

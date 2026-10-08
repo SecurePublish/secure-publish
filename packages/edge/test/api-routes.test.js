@@ -5,6 +5,7 @@
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/worker.js";
+import { CLAIM_RESERVED_SLUGS } from "../src/kv.js";
 
 function memoryKv(initial = {}) {
   const store = new Map(Object.entries(initial));
@@ -718,3 +719,103 @@ describe("GET|POST /auth/logout", () => {
   });
 
 });
+
+/**
+ * Claim-blocked slugs (PUT /api/hosting/subdomain). Separate from the Worker's
+ * product-host list (app/www/apex only) — see kv.js vs worker.js comments.
+ * `wise` and `demo` stay claimable (fixtures / interim tenant).
+ */
+const CLAIM_BLOCKED_SLUGS = [
+  "app",
+  "www",
+  "cname",
+  "api",
+  "admin",
+  "auth",
+  "login",
+  "mail",
+  "smtp",
+  "status",
+  "docs",
+  "static",
+  "assets",
+  "cdn",
+];
+
+function hostingEnv(initial = {}) {
+  return {
+    PANELS: memoryKv(initial),
+    SSO_DEV_BYPASS: "1",
+    CONSOLE_ORIGIN: "https://console.pages.dev",
+    OAUTH_ALLOWED_DOMAINS: "localhost",
+  };
+}
+
+function putSubdomain(env, slug) {
+  return worker.fetch(
+    new Request("https://worker.test/api/hosting/subdomain", {
+      method: "PUT",
+      headers: {
+        Origin: "https://console.pages.dev",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ slug }),
+    }),
+    env
+  );
+}
+
+describe("PUT /api/hosting/subdomain — reserved_slug", () => {
+  it("test list matches Worker CLAIM_RESERVED_SLUGS", () => {
+    assert.deepEqual(
+      [...CLAIM_RESERVED_SLUGS].sort(),
+      [...CLAIM_BLOCKED_SLUGS].sort()
+    );
+  });
+
+  for (const slug of CLAIM_BLOCKED_SLUGS) {
+    it(`rejects ${slug} with 400 {"error":"reserved_slug"} and writes nothing`, async () => {
+      const env = hostingEnv();
+      const res = await putSubdomain(env, slug);
+      assert.equal(res.status, 400);
+      assert.deepEqual(await res.json(), { error: "reserved_slug" });
+      assert.equal(await env.PANELS.get(`host:sub:${slug}`), null);
+      assert.equal(await env.PANELS.get("tenant:user:dev@localhost"), null);
+    });
+  }
+
+  it("rejects mixed-case reserved slugs (APP, Www, API)", async () => {
+    for (const slug of ["APP", "Www", "API"]) {
+      const env = hostingEnv();
+      const res = await putSubdomain(env, slug);
+      assert.equal(res.status, 400, slug);
+      assert.deepEqual(await res.json(), { error: "reserved_slug" });
+      assert.equal(await env.PANELS.get(`host:sub:${slug.toLowerCase()}`), null);
+      assert.equal(await env.PANELS.get("tenant:user:dev@localhost"), null);
+    }
+  });
+
+  it("still claims a normal slug (wise)", async () => {
+    const env = hostingEnv();
+    const res = await putSubdomain(env, "wise");
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { host: "wise.securepublish.work" });
+    assert.equal(await env.PANELS.get("host:sub:wise"), "dev@localhost");
+  });
+
+  it("still claims demo (interim tenant in docs — not claim-blocked)", async () => {
+    const env = hostingEnv();
+    const res = await putSubdomain(env, "demo");
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).host, "demo.securepublish.work");
+  });
+
+  it("409 subdomain_taken when another owner holds the lock", async () => {
+    const env = hostingEnv({ "host:sub:acme": "other@acme.example" });
+    const res = await putSubdomain(env, "acme");
+    assert.equal(res.status, 409);
+    assert.deepEqual(await res.json(), { error: "subdomain_taken" });
+    assert.equal(await env.PANELS.get("host:sub:acme"), "other@acme.example");
+  });
+});
+

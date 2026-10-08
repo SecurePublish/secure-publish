@@ -169,6 +169,40 @@ export async function putTenant(kv, tenant) {
   return record;
 }
 
+/**
+ * Slugs tenants may not claim via PUT /api/hosting/subdomain.
+ *
+ * This list is intentionally broader than product-host routing in worker.js.
+ * Product hosts (app/www/apex) skip host-owner binding so the Worker can
+ * proxy Pages / serve OAuth. Do NOT reuse this set there: adding api/admin/
+ * auth/login/cname to RESERVED_PRODUCT_HOSTS would make
+ * api.securepublish.work/{panelId} serve any panel without an owner lock.
+ *
+ * Unowned claim-blocked hosts still fail closed on panel serve (no lock → 404).
+ *
+ * Required: app, www, cname, api, admin, auth, login.
+ * Extra infra (short): mail/smtp (MX impersonation), status (status page),
+ * docs (first-party docs), static/assets/cdn (asset hosts).
+ * Not listed: wise (production tenant), demo (documented interim tenant).
+ * `_auth` sanitizes to `auth` (underscores stripped).
+ */
+export const CLAIM_RESERVED_SLUGS = new Set([
+  "app",
+  "www",
+  "cname",
+  "api",
+  "admin",
+  "auth",
+  "login",
+  "mail",
+  "smtp",
+  "status",
+  "docs",
+  "static",
+  "assets",
+  "cdn",
+]);
+
 export async function claimSubdomain(kv, slug, email) {
   const s = String(slug || "")
     .trim()
@@ -177,6 +211,9 @@ export async function claimSubdomain(kv, slug, email) {
     .replace(/^-+|-+$/g, "");
   if (!s || s.length < 2 || s.length > 63) {
     return { ok: false, status: 400, error: "invalid_slug" };
+  }
+  if (CLAIM_RESERVED_SLUGS.has(s)) {
+    return { ok: false, status: 400, error: "reserved_slug" };
   }
   const lockKey = `host:sub:${s}`;
   const existing = await kv.get(lockKey);
