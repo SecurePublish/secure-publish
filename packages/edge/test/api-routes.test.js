@@ -795,6 +795,15 @@ describe("PUT /api/hosting/subdomain — reserved_slug", () => {
     }
   });
 
+  it("rejects _AUTH after sanitize (underscores stripped → auth)", async () => {
+    const env = hostingEnv();
+    const res = await putSubdomain(env, "_AUTH");
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: "reserved_slug" });
+    assert.equal(await env.PANELS.get("host:sub:auth"), null);
+    assert.equal(await env.PANELS.get("host:sub:_auth"), null);
+  });
+
   it("still claims a normal slug (wise)", async () => {
     const env = hostingEnv();
     const res = await putSubdomain(env, "wise");

@@ -66,12 +66,18 @@ describe("assertPanelHostBinding — unit", () => {
 
   it("reserved product hosts skip subdomain lock", async () => {
     const env = { PANELS: memoryKv() };
-    const r = await assertPanelHostBinding(
-      req(`https://app.securepublish.work/${PANEL_ID}`, "app.securepublish.work"),
-      env,
-      panelRecord()
-    );
-    assert.equal(r.ok, true);
+    for (const host of [
+      "app.securepublish.work",
+      "www.securepublish.work",
+      "securepublish.work",
+    ]) {
+      const r = await assertPanelHostBinding(
+        req(`https://${host}/${PANEL_ID}`, host),
+        env,
+        panelRecord()
+      );
+      assert.equal(r.ok, true, host);
+    }
   });
 
   it("missing host:sub lock → deny", async () => {
