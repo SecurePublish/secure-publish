@@ -255,6 +255,9 @@ export async function getOrg(kv, domain) {
 /**
  * First verified work-email user of a domain creates `org:{domain}`; later
  * users join the same record (createdBy unchanged). Also upserts tenant:user.
+ *
+ * createdBy is provenance only: it must never grant admin powers without a
+ * separate domain proof (SSO email domain === org.domain).
  * @returns {Promise<{ ok: boolean, org?: object, created?: boolean }>}
  */
 export async function ensureOrgMembership(kv, email) {
@@ -500,9 +503,8 @@ async function sha256Hex(value) {
 
 const USER_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
 const BIND_FAIL_LIMIT = 5;
-const BIND_FAIL_GLOBAL_LIMIT = 50;
+const BIND_FAIL_IP_LIMIT = 20;
 const BIND_FAIL_WINDOW_SEC = 600;
-const GLOBAL_BIND_FAIL_KEY = "devbindfail:global";
 
 export function normalizeUserCode(raw) {
   return String(raw ?? "")
@@ -557,19 +559,39 @@ export async function createDeviceCode(kv) {
   };
 }
 
-export async function bindDeviceByUserCode(kv, userCodeRaw, email) {
+function bindFailIpKey(ipRaw) {
+  const ip = String(ipRaw || "").trim();
+  if (!ip || ip.length > 45) return "";
+  if (/[\s/]/.test(ip)) return "";
+  return `devbindfail:ip:${ip}`;
+}
+
+/**
+ * Device bind: per-account 5/10min and per-IP 20/10min (CF-Connecting-IP).
+ * No global failure counter — a cheap domain must not DoS device login.
+ * @param {{ get: Function, put: Function, delete: Function }} kv
+ * @param {unknown} userCodeRaw
+ * @param {string} email
+ * @param {string} [ipRaw]
+ */
+export async function bindDeviceByUserCode(kv, userCodeRaw, email, ipRaw) {
   const owner = String(email || "").trim().toLowerCase();
   const failKey = `devbindfail:${owner}`;
+  const ipKey = bindFailIpKey(ipRaw);
   const accountFails = Number(await kv.get(failKey)) || 0;
-  const globalFails = Number(await kv.get(GLOBAL_BIND_FAIL_KEY)) || 0;
-  if (accountFails >= BIND_FAIL_LIMIT || globalFails >= BIND_FAIL_GLOBAL_LIMIT) {
+  const ipFails = ipKey ? Number(await kv.get(ipKey)) || 0 : 0;
+  if (accountFails >= BIND_FAIL_LIMIT || (ipKey && ipFails >= BIND_FAIL_IP_LIMIT)) {
     return { ok: false, status: 429, error: "device_code_rate_limited" };
   }
 
   async function invalid() {
     await kv.put(failKey, String(accountFails + 1), { expirationTtl: BIND_FAIL_WINDOW_SEC });
-    await kv.put(GLOBAL_BIND_FAIL_KEY, String(globalFails + 1), {
-      expirationTtl: BIND_FAIL_WINDOW_SEC,
+    if (ipKey) {
+      await kv.put(ipKey, String(ipFails + 1), { expirationTtl: BIND_FAIL_WINDOW_SEC });
+    }
+    console.log("device_bind_fail", {
+      account: accountFails + 1,
+      ip: ipKey ? ipFails + 1 : 0,
     });
     return { ok: false, status: 404, error: "device_code_invalid" };
   }

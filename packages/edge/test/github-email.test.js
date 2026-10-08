@@ -9,6 +9,7 @@ import {
   readSessionCookie,
   COOKIE_NAME,
   MICROSOFT_DOMAIN_UNVERIFIED,
+  GOOGLE_WORKSPACE_REQUIRED,
 } from "../src/sso.js";
 
 const APP = "https://app.securepublish.work";
@@ -321,7 +322,7 @@ describe("GitHub OAuth callback uses selected email", () => {
     mockIdp({
       tokenUrlPart: "oauth2.googleapis.com/token",
       userUrlPart: "googleapis.com/oauth2/v2/userinfo",
-      profile: { email: "ana@WISES.COM.BR", verified_email: true },
+      profile: { email: "ana@WISES.COM.BR", verified_email: true, hd: "wises.com.br" },
     });
     const res = await callback("google", testEnv);
     assert.equal(res.status, 302);
@@ -335,6 +336,7 @@ describe("GitHub OAuth callback uses selected email", () => {
       tokenJson: {
         access_token: "tok",
         id_token: unsignedJwt({
+          aud: "ms-id",
           email: "ana@WISES.COM.BR",
           xms_edov: true,
         }),
@@ -413,11 +415,23 @@ describe("GitHub OAuth callback uses selected email", () => {
     mockIdp({
       tokenUrlPart: "oauth2.googleapis.com/token",
       userUrlPart: "googleapis.com/oauth2/v2/userinfo",
-      profile: { email: "ana@gmail.com", verified_email: true },
+      profile: { email: "ana@gmail.com", verified_email: true, hd: "gmail.com" },
     });
     const res = await callback("google", env());
     assert.equal(res.status, 403);
     assert.equal(await res.text(), GOOGLE_MS_DENIED);
+  });
+
+  it("denies a verified Google company account when hd is absent", async () => {
+    mockIdp({
+      tokenUrlPart: "oauth2.googleapis.com/token",
+      userUrlPart: "googleapis.com/oauth2/v2/userinfo",
+      profile: { email: "ana@wises.com.br", verified_email: true },
+    });
+    const res = await callback("google", env());
+    assert.equal(res.status, 403);
+    assert.equal(await res.text(), `${GOOGLE_WORKSPACE_REQUIRED}\n`);
+    assert.equal(sessionCookieLines(res).length, 0);
   });
 
   it("denies Microsoft when xms_edov is missing even for a work domain", async () => {
@@ -426,6 +440,7 @@ describe("GitHub OAuth callback uses selected email", () => {
       tokenJson: {
         access_token: "tok",
         id_token: unsignedJwt({
+          aud: "ms-id",
           email: "ana@wises.com.br",
           upn: "ana@wises.com.br",
           preferred_username: "ana@wises.com.br",
@@ -443,7 +458,7 @@ describe("GitHub OAuth callback uses selected email", () => {
       tokenUrlPart: "login.microsoftonline.com",
       tokenJson: {
         access_token: "tok",
-        id_token: unsignedJwt({ email: "ana@gmail.com", xms_edov: true }),
+        id_token: unsignedJwt({ aud: "ms-id", email: "ana@gmail.com", xms_edov: true }),
       },
     });
     const res = await callback("microsoft", env());

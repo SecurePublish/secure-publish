@@ -11,6 +11,7 @@ import {
   readSessionCookie,
   COOKIE_NAME,
   MICROSOFT_DOMAIN_UNVERIFIED,
+  GOOGLE_WORKSPACE_REQUIRED,
 } from "../src/sso.js";
 import { getOrg, orgKvKey } from "../src/kv.js";
 import { memoryKv, oauthEnv } from "./helpers.js";
@@ -135,10 +136,11 @@ describe("self-service signup — Google org create/join", () => {
   });
 
   function mockGoogle(email, extra = {}) {
+    const { tokenJson, ...profileExtra } = extra;
     globalThis.fetch = async (url) => {
       const u = String(url);
       if (u.includes("oauth2.googleapis.com/token")) {
-        return new Response(JSON.stringify({ access_token: "tok" }), {
+        return new Response(JSON.stringify({ access_token: "tok", ...tokenJson }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -148,7 +150,7 @@ describe("self-service signup — Google org create/join", () => {
           JSON.stringify({
             email,
             verified_email: true,
-            ...extra,
+            ...profileExtra,
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
@@ -218,11 +220,48 @@ describe("self-service signup — Google org create/join", () => {
 
   it("denies a verified gmail Google sign-in", async () => {
     const env = fullOauthEnv(memoryKv());
-    mockGoogle("eve@gmail.com");
+    mockGoogle("eve@gmail.com", { hd: "gmail.com" });
     const res = await googleCallback(env);
     assert.equal(res.status, 403);
     assert.equal(sessionCookieLines(res).length, 0);
     assert.equal(await env.PANELS.get("org:gmail.com"), null);
+  });
+
+  it("denies a verified Google account with no hd and a company email", async () => {
+    const env = fullOauthEnv(memoryKv());
+    mockGoogle(CLOVIS);
+    const res = await googleCallback(env);
+    assert.equal(res.status, 403);
+    assert.equal(await res.text(), `${GOOGLE_WORKSPACE_REQUIRED}\n`);
+    assert.equal(sessionCookieLines(res).length, 0);
+    assert.equal(await env.PANELS.get("org:furk.tech"), null);
+  });
+
+  it("denies Google login when the raw email domain contains # / ? \\ :", async () => {
+    const env = fullOauthEnv(memoryKv());
+    for (const email of [
+      "x@wises.com.br#evil",
+      "x@wises.com.br/evil",
+      "x@wises.com.br?evil",
+      "x@wises.com.br\\evil",
+      "x@wises.com.br:8080",
+    ]) {
+      mockGoogle(email, { hd: "wises.com.br" });
+      const res = await googleCallback(env);
+      assert.equal(res.status, 403, email);
+      assert.equal(sessionCookieLines(res).length, 0, email);
+    }
+  });
+
+  it("reads Google hd from the id_token when userinfo omits it", async () => {
+    const kv = memoryKv();
+    const env = fullOauthEnv(kv);
+    mockGoogle(CLOVIS, {
+      tokenJson: { id_token: unsignedJwt({ aud: "gid", hd: "furk.tech" }) },
+    });
+    const res = await googleCallback(env);
+    assert.equal(res.status, 302);
+    assert.equal((await getOrg(kv, "furk.tech")).createdBy, CLOVIS);
   });
 });
 
@@ -337,7 +376,7 @@ describe("self-service signup — Microsoft xms_edov", () => {
     const env = fullOauthEnv(kv);
     const res = await microsoftCallback(env, {
       access_token: "tok",
-      id_token: unsignedJwt({ email: CLOVIS, xms_edov: true }),
+      id_token: unsignedJwt({ aud: "ms-id", email: CLOVIS, xms_edov: true }),
     });
     assert.equal(res.status, 302);
     const org = await getOrg(kv, "furk.tech");
@@ -345,7 +384,7 @@ describe("self-service signup — Microsoft xms_edov", () => {
 
     const res2 = await microsoftCallback(env, {
       access_token: "tok",
-      id_token: unsignedJwt({ email: TEAMMATE, xms_edov: true }),
+      id_token: unsignedJwt({ aud: "ms-id", email: TEAMMATE, xms_edov: true }),
     });
     assert.equal(res2.status, 302);
     assert.equal((await getOrg(kv, "furk.tech")).createdBy, CLOVIS);
@@ -356,6 +395,7 @@ describe("self-service signup — Microsoft xms_edov", () => {
     const res = await microsoftCallback(env, {
       access_token: "tok",
       id_token: unsignedJwt({
+        aud: "ms-id",
         email: ANA,
         upn: ANA,
         preferred_username: ANA,
@@ -371,7 +411,7 @@ describe("self-service signup — Microsoft xms_edov", () => {
     const env = fullOauthEnv(memoryKv());
     const res = await microsoftCallback(env, {
       access_token: "tok",
-      id_token: unsignedJwt({ email: ANA, xms_edov: false }),
+      id_token: unsignedJwt({ aud: "ms-id", email: ANA, xms_edov: false }),
     });
     assert.equal(res.status, 403);
     assert.match(await res.text(), new RegExp(MICROSOFT_DOMAIN_UNVERIFIED));
@@ -383,6 +423,31 @@ describe("self-service signup — Microsoft xms_edov", () => {
     const res = await microsoftCallback(env, { access_token: "tok" });
     assert.equal(res.status, 403);
     assert.match(await res.text(), new RegExp(MICROSOFT_DOMAIN_UNVERIFIED));
+  });
+
+  it("denies Microsoft when id_token aud does not match client_id", async () => {
+    const env = fullOauthEnv(memoryKv());
+    const res = await microsoftCallback(env, {
+      access_token: "tok",
+      id_token: unsignedJwt({ aud: "other-app", email: CLOVIS, xms_edov: true }),
+    });
+    assert.equal(res.status, 403);
+    const body = await res.text();
+    assert.equal(body, `${MICROSOFT_DOMAIN_UNVERIFIED}\n`);
+    assert.equal(/optional claim|Configure/i.test(body), false);
+    assert.equal(sessionCookieLines(res).length, 0);
+  });
+
+  it("Microsoft 403 is the stable code with placeholder copy (no admin instructions)", async () => {
+    const env = fullOauthEnv(memoryKv());
+    const res = await microsoftCallback(env, {
+      access_token: "tok",
+      id_token: unsignedJwt({ aud: "ms-id", email: ANA, xms_edov: false }),
+    });
+    assert.equal(res.status, 403);
+    const body = await res.text();
+    assert.equal(body, `${MICROSOFT_DOMAIN_UNVERIFIED}\n`);
+    assert.equal(/optional claim|Configure|xms_edov/i.test(body), false);
   });
 });
 

@@ -181,10 +181,17 @@ describe("OAuth no longer auto-approves a device", () => {
         });
       }
       if (u.includes("googleapis.com/oauth2/v2/userinfo")) {
-        return new Response(JSON.stringify({ email: "Ana@Wises.com.br" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({
+            email: "Ana@Wises.com.br",
+            verified_email: true,
+            hd: "wises.com.br",
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }
+        );
       }
       throw new Error(`unexpected fetch ${u}`);
     };
@@ -284,26 +291,66 @@ describe("POST /api/device/bind", () => {
   it("6th failed bind for the same account is 429 device_code_rate_limited", async () => {
     const env = oauthEnv(memoryKv());
     const cookie = await cookieFor(env);
+    const ip = { "CF-Connecting-IP": "203.0.113.9" };
     const bodies = [];
     for (let i = 0; i < 5; i++) {
-      const res = await bind(env, cookie, { user_code: "BBBB-CCCC" });
+      const res = await bind(env, cookie, { user_code: "BBBB-CCCC" }, ip);
       assert.equal(res.status, 404);
       bodies.push(await res.json());
     }
     for (const body of bodies) assert.deepEqual(body, INVALID);
-    const sixth = await bind(env, cookie, { user_code: "BBBB-CCCC" });
+    const sixth = await bind(env, cookie, { user_code: "BBBB-CCCC" }, ip);
     assert.equal(sixth.status, 429);
     assert.deepEqual(await sixth.json(), { error: "device_code_rate_limited" });
   });
 
-  it("51st failed bind globally is 429 even for a fresh account", async () => {
+  it("21st failed bind from the same IP is 429 device_code_rate_limited", async () => {
+    const env = oauthEnv(memoryKv());
+    const ip = { "CF-Connecting-IP": "203.0.113.50" };
+    for (let i = 0; i < 20; i++) {
+      const cookie = await cookieFor(env, `u${i}@wises.com.br`);
+      const res = await bind(env, cookie, { user_code: "BBBB-CCCC" }, ip);
+      assert.equal(res.status, 404);
+      assert.deepEqual(await res.json(), INVALID);
+    }
+    const cookie = await cookieFor(env, "last@wises.com.br");
+    const twentyFirst = await bind(env, cookie, { user_code: "BBBB-CCCC" }, ip);
+    assert.equal(twentyFirst.status, 429);
+    assert.deepEqual(await twentyFirst.json(), { error: "device_code_rate_limited" });
+  });
+
+  it("a leftover global bind-fail key does not 429 a fresh account", async () => {
     const panels = memoryKv();
     const env = oauthEnv(panels);
     await panels.put("devbindfail:global", "50");
+    const start = await startDevice(env);
     const cookie = await cookieFor(env, "bia@wises.com.br");
-    const res = await bind(env, cookie, { user_code: "BBBB-CCCC" });
-    assert.equal(res.status, 429);
-    assert.deepEqual(await res.json(), { error: "device_code_rate_limited" });
+    const res = await bind(env, cookie, { user_code: start.user_code });
+    assert.equal(res.status, 200);
+    assert.equal(panels._store.has("devbindfail:global"), true);
+  });
+
+  it("failures on other accounts and IPs do not lock out an unrelated user", async () => {
+    const panels = memoryKv();
+    const env = oauthEnv(panels);
+    for (let i = 0; i < 12; i++) {
+      const cookie = await cookieFor(env, `u${i}@wises.com.br`);
+      const ip = { "CF-Connecting-IP": `203.0.113.${i + 1}` };
+      for (let j = 0; j < 4; j++) {
+        const res = await bind(env, cookie, { user_code: "BBBB-CCCC" }, ip);
+        assert.equal(res.status, 404);
+      }
+    }
+    const start = await startDevice(env);
+    const cookie = await cookieFor(env, "unrelated@furk.tech");
+    const res = await bind(
+      env,
+      cookie,
+      { user_code: start.user_code },
+      { "CF-Connecting-IP": "198.51.100.9" }
+    );
+    assert.equal(res.status, 200);
+    assert.equal(panels._store.has("devbindfail:global"), false);
   });
 
   it("bind without cookie is 401", async () => {

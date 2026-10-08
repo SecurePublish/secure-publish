@@ -614,7 +614,8 @@ async function handleDeviceBind(request, env, { email }) {
   } catch {
     return err("invalid_json", 400, request, env);
   }
-  const result = await bindDeviceByUserCode(env.PANELS, body?.user_code, email);
+  const ip = request.headers.get("CF-Connecting-IP") || "";
+  const result = await bindDeviceByUserCode(env.PANELS, body?.user_code, email, ip);
   if (!result.ok) return err(result.error || "error", result.status || 400, request, env);
   return json({ ok: true }, 200, request, env);
 }

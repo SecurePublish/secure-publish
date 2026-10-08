@@ -123,11 +123,15 @@ function apiHeaders(cookie, extra = {}) {
 }
 
 describe("PUBLIC_EMAIL_DOMAINS", () => {
-  it("exports exactly the spec list", () => {
-    assert.deepEqual(
-      [...PUBLIC_EMAIL_DOMAINS].map((d) => String(d).toLowerCase()),
-      SPEC_DOMAINS
-    );
+  it("includes the spec list plus vendored free-email-domains extras", () => {
+    for (const d of SPEC_DOMAINS) {
+      assert.equal(PUBLIC_EMAIL_DOMAINS.has(d), true, d);
+    }
+    for (const d of ["pm.me", "fastmail.com", "hotmail.co.uk", "live.com.br", "tutanota.com"]) {
+      assert.equal(isPublicEmailDomain(`user@${d}`), true, d);
+      assert.equal(isBlockedSignupDomain(`user@${d}`), true, d);
+    }
+    assert.ok(PUBLIC_EMAIL_DOMAINS.size > 1000);
   });
 
   it("matches the email domain part case-insensitively (User@GMAIL.com)", () => {
@@ -157,8 +161,23 @@ describe("PUBLIC_EMAIL_DOMAINS", () => {
 });
 
 describe("normalizeEmailDomain / signup blocklist", () => {
-  it("lowercases, trims, and strips a trailing dot", () => {
-    assert.equal(normalizeEmailDomain("  Ana@WISES.COM.BR. "), "wises.com.br");
+  it("lowercases and trims a valid host; does not strip a trailing dot", () => {
+    assert.equal(normalizeEmailDomain("  Ana@WISES.COM.BR "), "wises.com.br");
+    assert.equal(normalizeEmailDomain("  Ana@WISES.COM.BR. "), "");
+  });
+
+  it("denies domains containing # / ? \\ : and never URL-repairs them", () => {
+    const emails = [
+      "x@wises.com.br#evil",
+      "x@wises.com.br/evil",
+      "x@wises.com.br?evil",
+      "x@wises.com.br\\evil",
+      "x@wises.com.br:8080",
+    ];
+    for (const email of emails) {
+      assert.equal(normalizeEmailDomain(email), "", email);
+      assert.equal(isBlockedSignupDomain(email), true, email);
+    }
   });
 
   it("punycode-encodes an IDN email domain", () => {

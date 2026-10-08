@@ -73,6 +73,16 @@ function hasAnyOauthProvider(env) {
 }
 
 export const MICROSOFT_DOMAIN_UNVERIFIED = "microsoft_domain_unverified";
+export const GOOGLE_WORKSPACE_REQUIRED = "google_workspace_required";
+
+function jwtAudMatches(payload, clientId) {
+  const expected = String(clientId || "");
+  if (!expected) return false;
+  const aud = payload?.aud;
+  if (aud === expected) return true;
+  if (Array.isArray(aud)) return aud.some((a) => a === expected);
+  return false;
+}
 
 /**
  * Signup / app-login domain gate: deny personal and free-mail providers
@@ -118,18 +128,22 @@ function microsoftEdovTrue(value) {
 
 /**
  * Microsoft identity from the token-endpoint id_token only.
- * Requires xms_edov === true and a string `email` claim. Never uses
- * upn / preferred_username / Graph mail.
+ * Requires aud === client_id, xms_edov === true, and a string `email` claim.
+ * Never uses upn / preferred_username / Graph mail.
  * @param {Record<string, unknown>} tokenJson
+ * @param {string} [clientId]
  * @returns {{ email: string } | { error: string }}
  */
-export function emailFromMicrosoftIdToken(tokenJson) {
+export function emailFromMicrosoftIdToken(tokenJson, clientId) {
   const raw = tokenJson && typeof tokenJson.id_token === "string" ? tokenJson.id_token : "";
   if (!raw) return { error: MICROSOFT_DOMAIN_UNVERIFIED };
   let payload;
   try {
     payload = decodeJwt(raw);
   } catch {
+    return { error: MICROSOFT_DOMAIN_UNVERIFIED };
+  }
+  if (!jwtAudMatches(payload, clientId)) {
     return { error: MICROSOFT_DOMAIN_UNVERIFIED };
   }
   if (!microsoftEdovTrue(payload?.xms_edov)) {
@@ -140,6 +154,25 @@ export function emailFromMicrosoftIdToken(tokenJson) {
     return { error: MICROSOFT_DOMAIN_UNVERIFIED };
   }
   return { email };
+}
+
+/**
+ * Google Workspace hosted domain: userinfo `hd`, else id_token `hd` (aud-checked).
+ * @param {Record<string, unknown>} me
+ * @param {Record<string, unknown>} tokenJson
+ * @param {string} [clientId]
+ */
+function googleHostedDomain(me, tokenJson, clientId) {
+  if (typeof me?.hd === "string" && me.hd.trim()) return me.hd.trim();
+  const raw = tokenJson && typeof tokenJson.id_token === "string" ? tokenJson.id_token : "";
+  if (!raw) return "";
+  try {
+    const payload = decodeJwt(raw);
+    if (!jwtAudMatches(payload, clientId)) return "";
+    return typeof payload.hd === "string" ? payload.hd.trim() : "";
+  } catch {
+    return "";
+  }
 }
 
 /** Exact origins from CONSOLE_ORIGIN via `new URL().origin` — no suffix matching. */
@@ -710,6 +743,9 @@ async function oauthCallback(request, env, provider) {
   if (identity?.error === MICROSOFT_DOMAIN_UNVERIFIED) {
     return microsoftDomainUnverifiedResponse();
   }
+  if (identity?.error === GOOGLE_WORKSPACE_REQUIRED) {
+    return googleWorkspaceRequiredResponse();
+  }
   const email = String(identity?.email || "")
     .trim()
     .toLowerCase();
@@ -776,13 +812,18 @@ function githubLoginDeniedResponse() {
 }
 
 function microsoftDomainUnverifiedResponse() {
-  return new Response(
-    `Acesso negado: ${MICROSOFT_DOMAIN_UNVERIFIED}. Configure a optional claim xms_edov no token de ID.\n`,
-    {
-      status: 403,
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    }
-  );
+  // Placeholder copy — Sarah will write the final end-user message.
+  return new Response(`${MICROSOFT_DOMAIN_UNVERIFIED}\n`, {
+    status: 403,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+}
+
+function googleWorkspaceRequiredResponse() {
+  return new Response(`${GOOGLE_WORKSPACE_REQUIRED}\n`, {
+    status: 403,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
 }
 
 /**
@@ -790,7 +831,7 @@ function microsoftDomainUnverifiedResponse() {
  */
 async function fetchUserIdentity(provider, cfg, tokenJson, env = {}) {
   if (provider === "microsoft") {
-    return emailFromMicrosoftIdToken(tokenJson || {});
+    return emailFromMicrosoftIdToken(tokenJson || {}, env.MICROSOFT_CLIENT_ID);
   }
 
   const accessToken = tokenJson?.access_token;
@@ -824,10 +865,10 @@ async function fetchUserIdentity(provider, cfg, tokenJson, env = {}) {
   if (!verified) return null;
   const email = typeof me.email === "string" ? me.email : "";
   if (!email) return null;
-  if (typeof me.hd === "string" && me.hd.trim()) {
-    const hd = normalizeEmailDomain(me.hd);
-    const domain = normalizeEmailDomain(email);
-    if (hd && domain !== hd && !domain.endsWith(`.${hd}`)) return null;
+  const hd = normalizeEmailDomain(googleHostedDomain(me, tokenJson, env.GOOGLE_CLIENT_ID));
+  const domain = normalizeEmailDomain(email);
+  if (!hd || !domain || hd !== domain) {
+    return { error: GOOGLE_WORKSPACE_REQUIRED };
   }
   return { email };
 }
