@@ -37,7 +37,7 @@ OAUTH_ALLOWED_DOMAINS = "wises.com.br"
 CONSOLE_ORIGIN = "https://app.securepublish.work,https://secure-publish-app.pages.dev,http://127.0.0.1:8765"
 CF_ZONE_ID = "397f24981bc11c467ae86b5ee71a43e1"
 # Off until QA/security sign-off. PUT/verify return 403 custom_domains_disabled.
-CUSTOM_DOMAINS_ENABLED = "false"
+CUSTOM_DOMAINS_ENABLED = "true"
 
 # ─── Secrets (never commit) ───
 # wrangler secret put SESSION_SECRET GOOGLE_* GITHUB_* MICROSOFT_*
