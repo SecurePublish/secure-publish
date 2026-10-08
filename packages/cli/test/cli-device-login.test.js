@@ -54,13 +54,16 @@ describe("CLI device login / logout", () => {
   let origCwd;
   let origFetch;
   let origExitCode;
+  let origNoBrowser;
 
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "sp-cli-"));
     origHome = process.env.HOME;
     origCwd = process.cwd();
     origExitCode = process.exitCode;
+    origNoBrowser = process.env.SECURE_PUBLISH_NO_BROWSER;
     process.env.HOME = tmp;
+    process.env.SECURE_PUBLISH_NO_BROWSER = "1";
     process.chdir(tmp);
     process.exitCode = 0;
     origFetch = globalThis.fetch;
@@ -69,6 +72,8 @@ describe("CLI device login / logout", () => {
   afterEach(() => {
     process.chdir(origCwd);
     process.env.HOME = origHome;
+    if (origNoBrowser === undefined) delete process.env.SECURE_PUBLISH_NO_BROWSER;
+    else process.env.SECURE_PUBLISH_NO_BROWSER = origNoBrowser;
     globalThis.fetch = origFetch;
     process.exitCode = origExitCode;
     fs.rmSync(tmp, { recursive: true, force: true });

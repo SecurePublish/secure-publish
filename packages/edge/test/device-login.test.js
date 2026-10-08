@@ -390,4 +390,35 @@ describe("POST /api/device/token", () => {
     assert.equal(asPlain.status, 400);
     assert.equal((await asPlain.json()).error, "invalid_request");
   });
+
+  it("approved and consumed device records are written with expirationTtl", async () => {
+    const puts = [];
+    const inner = memoryKv();
+    const panels = {
+      ...inner,
+      async put(key, value, opts) {
+        puts.push({ key, value: String(value), opts: opts || null });
+        return inner.put(key, value);
+      },
+    };
+    const env = oauthEnv(panels);
+    const start = await startDevice(env);
+    const cookie = await cookieFor(env);
+    const bound = await bind(env, cookie, { user_code: start.user_code });
+    assert.equal(bound.status, 200);
+    const polled = await poll(env, start.device_code);
+    assert.equal(polled.status, 200);
+
+    const devicePuts = puts.filter((p) => p.key === `device:${start.device_code}`);
+    const approved = devicePuts.find((p) => JSON.parse(p.value).status === "approved");
+    const consumed = devicePuts.find((p) => JSON.parse(p.value).status === "consumed");
+    assert.ok(approved, "approved put");
+    assert.ok(consumed, "consumed put");
+    assert.equal(typeof approved.opts?.expirationTtl, "number");
+    assert.ok(approved.opts.expirationTtl >= 60);
+    assert.ok(approved.opts.expirationTtl <= 600);
+    assert.equal(typeof consumed.opts?.expirationTtl, "number");
+    assert.ok(consumed.opts.expirationTtl >= 60);
+    assert.ok(consumed.opts.expirationTtl <= 600);
+  });
 });

@@ -421,8 +421,16 @@ export function buildAccessFromPatch(body, publisherEmail) {
 export { normalizeEmails, normalizeDomains };
 
 const DEVICE_TTL_SEC = 600;
+/** Cloudflare KV rejects expirationTtl below 60s. */
+const KV_MIN_TTL_SEC = 60;
 /** Publish-only credential. 12h, revocable. Not a browser cookie. */
 const PUBLISH_TOKEN_TTL_SEC = 60 * 60 * 12;
+
+function deviceRecordTtlSec(exp, now) {
+  const left = Math.floor(Number(exp) - now);
+  if (!Number.isFinite(left) || left < KV_MIN_TTL_SEC) return KV_MIN_TTL_SEC;
+  return Math.min(DEVICE_TTL_SEC, left);
+}
 
 function randomHex(byteLen) {
   const bytes = new Uint8Array(byteLen);
@@ -569,7 +577,8 @@ export async function approveDeviceCode(kv, code, email) {
   await kv.put(idxKey, JSON.stringify(hashes));
   await kv.put(
     key,
-    JSON.stringify({ status: "approved", exp: rec.exp, email: owner, accessToken, tokenExp })
+    JSON.stringify({ status: "approved", exp: rec.exp, email: owner, accessToken, tokenExp }),
+    { expirationTtl: deviceRecordTtlSec(rec.exp, now) }
   );
   return { ok: true, email: owner };
 }
@@ -598,7 +607,9 @@ export async function pollDeviceCode(kv, code) {
   const accessToken = rec.accessToken;
   const email = rec.email;
   const tokenExp = rec.tokenExp;
-  await kv.put(key, JSON.stringify({ status: "consumed", exp: rec.exp, email }));
+  await kv.put(key, JSON.stringify({ status: "consumed", exp: rec.exp, email }), {
+    expirationTtl: deviceRecordTtlSec(rec.exp, now),
+  });
   return { ok: true, accessToken, email, tokenExp };
 }
 

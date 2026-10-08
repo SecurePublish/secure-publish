@@ -64,7 +64,7 @@ Usage:
   ${CLI} mock-serve [--port 8787]
   ${CLI} help
 
-Sign in with Google via \`login\`. Publish uses that account.
+Run \`login\`, sign in with your company account in the browser, and enter the code it shows. Publishing uses that account.
 Do not set CLOUDFLARE_API_TOKEN for publish.
 
 Operator only (\`--operator\` or SECURE_PUBLISH_OPERATOR=1) still writes KV directly:
@@ -254,6 +254,7 @@ function clearPublishSession() {
 }
 
 function openLoginUrl(url) {
+  if (process.env.SECURE_PUBLISH_NO_BROWSER === "1") return;
   const cmd = process.platform === "darwin" ? "open" : "xdg-open";
   try {
     const child = spawn(cmd, [url], { stdio: "ignore", detached: true });
