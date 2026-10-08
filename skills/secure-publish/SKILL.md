@@ -37,32 +37,54 @@ User prompts this skill handles:
 
 ## What you say
 
-Say only these lines about sign-in and publish. Do not explain the mechanism.
+Say only these lines about sign-in and publish (including the no-host branch). Do not explain the mechanism.
 
-If this machine is not signed in yet, say exactly:
+Check whether this machine is signed in with:
+
+```bash
+npx --yes github:clovistx/secure-publish doctor
+```
+
+Doctor prints `Status: conta ligada (email).` when linked (plus `host: …` only when a host is set), or `Status: conta não ligada nesta máquina.` when not. Exit `0` if linked, `1` if not.
+
+If not signed in, say exactly:
 
 > Vou abrir o login. Entra com Google na página que abrir — a conta fica ligada nesta máquina.
 
-Then run `npx --yes github:clovistx/secure-publish login` and wait. Google only — not Microsoft, not GitHub. When it finishes, say exactly:
+Then run `npx --yes github:clovistx/secure-publish login` and wait. Google only — not Microsoft, not GitHub.
+
+When login finishes, the CLI prints `host: {value}` or an empty `host:` line. Use `{host}` lines only when that value is non-empty.
+
+If host is non-empty, say exactly:
 
 > Conta ligada. Publicando em {host}.
 
-Do **not** add “aberto pra empresa”, “open to the company”, or any company-wide access claim on that line.
+Do **not** add “aberto pra empresa”, “open to the company”, or any claim that the panel is already published company-wide on that line.
 
-Use the host the command printed. If there is no host yet, ask where to publish. Do not invent one.
+If host is empty, say exactly:
 
-Company-wide means the same email domain as the signed-in account. If they did **not** already say who can see the panel, ask once **before** publishing — never after announcing company-wide open:
+> Conta ligada. Ainda não tem endereço de publicação.
+
+Then ask (do not invent a host):
+
+> Onde publicar? Posso reservar {slug}.securepublish.work ou você usa um domínio próprio.
+
+Company-wide means the same email domain as the signed-in account. If they did **not** already say who can see the panel, ask once. Ask this before you run publish:
 
 > Quer restringir a alguém? Passe os e-mails (senão fica aberto pra empresa — mesmo domínio de e-mail).
+
+Only the final success confirmation may state that the panel **was** published to the company (`Publicado pra **toda a empresa**`). The restrict question may mention the default (open to the company, same email domain) as the alternative to restricting. Do not claim on the post-login line that the panel is already open company-wide.
 
 Only after they answer (or they already specified access) publish:
 
 ```bash
+# company-wide (same email domain; no --to)
 npx --yes github:clovistx/secure-publish publish ./dashboard.html --title "Painel"
+# restricted to specific emails
 npx --yes github:clovistx/secure-publish publish ./dashboard.html --to clovis@wises.com.br,ana@wises.com.br
 ```
 
-On success, say exactly (do not invent `{url}` — only the url the command printed). “Aberto pra empresa” / company-wide wording belongs **only** here — in the final confirmation — not in the post-login line:
+On success, say exactly (do not invent `{url}` — only the url the command printed):
 
 > Publicado pra **toda a empresa**: {url}
 
@@ -70,11 +92,16 @@ If they passed emails:
 
 > Publicado só para {emails}: {url}
 
-On any failure, say exactly:
+On failure, match what the CLI reported — do **not** always say “Tenta de novo em instantes”:
 
-> Não consegui publicar agora. A conta está ligada em {host}. Tenta de novo em instantes.
+| CLI reports | Say exactly |
+|-------------|-------------|
+| `File not found: …` or `HTML file is empty` | Arquivo HTML não encontrado ou vazio. Confira o caminho e tente de novo. |
+| `Inclua pelo menos um e-mail em --to …` | Inclua pelo menos um e-mail válido em --to. |
+| `Conta não ligada nesta máquina. …` | Conta não ligada nesta máquina. Vou abrir o login de novo. |
+| `Não consegui publicar agora…` (network/server) | Não consegui publicar agora.{optional host} Tenta de novo em instantes. |
 
-If the command says the account is not linked, go back to the login line. Never ask them for an infrastructure secret.
+For the not-logged-in / session-expired line, go back to login (`npx --yes github:clovistx/secure-publish login`). For the network/server line, if host is non-empty insert ` A conta está ligada em {host}.` before “Tenta de novo…”; if host is empty, omit that sentence. Only the network/server line may say “Tenta de novo em instantes”. Never ask them for an infrastructure secret.
 
 ## Access (V1)
 
@@ -98,7 +125,7 @@ If the command says the account is not linked, go back to the login line. Never 
 
 ## Do not claim
 
-1. A “Continuar como …” screen on the landing/demo proves the *flow*; it authenticates nobody.
+1. Never claim that a “Continuar como …” screen on the landing/demo authenticates anyone — it only proves the *flow*.
 2. Do not imitate the Google window. No logos or brand colors on a fake sign-in.
 3. The panel URL is not a credential. Without sign-in, the page does not return the HTML.
 4. A domain list is not org membership.

@@ -93,6 +93,11 @@ describe("skill documents github npx invocations only", () => {
       /Vou abrir o login\. Entra com Google na página que abrir — a conta fica ligada nesta máquina\./
     );
     assert.match(skill, /Conta ligada\. Publicando em \{host\}\./);
+    assert.match(skill, /Conta ligada\. Ainda não tem endereço de publicação\./);
+    assert.match(
+      skill,
+      /Onde publicar\? Posso reservar \{slug\}\.securepublish\.work ou você usa um domínio próprio\./
+    );
     assert.match(
       skill,
       /Quer restringir a alguém\? Passe os e-mails \(senão fica aberto pra empresa — mesmo domínio de e-mail\)\./
@@ -101,35 +106,90 @@ describe("skill documents github npx invocations only", () => {
     assert.match(skill, /Publicado só para \{emails\}: \{url\}/);
     assert.match(
       skill,
-      /Não consegui publicar agora\. A conta está ligada em \{host\}\. Tenta de novo em instantes\./
+      /Arquivo HTML não encontrado ou vazio\. Confira o caminho e tente de novo\./
     );
+    assert.match(skill, /Inclua pelo menos um e-mail válido em --to\./);
+    assert.match(
+      skill,
+      /Conta não ligada nesta máquina\. Vou abrir o login de novo\./
+    );
+    assert.match(skill, /Não consegui publicar agora\.\{optional host\} Tenta de novo em instantes\./);
   });
 
-  it("post-login line omits company-wide wording; ask restrict before publish", () => {
+  it("post-login omits company-wide claim; restrict ask before publish; no-host branch", () => {
     const saySection = skill.split("## What you say")[1]?.split("## Access")[0] ?? "";
-    // Exact post-login line — no "aberto pra empresa" / English equivalent on that line
+    assert.match(
+      saySection,
+      /Say only these lines about sign-in and publish \(including the no-host branch\)/
+    );
+    assert.match(
+      saySection,
+      /Use `\{host\}` lines only when that value is non-empty/
+    );
     assert.match(saySection, /> Conta ligada\. Publicando em \{host\}\.\n/);
+    assert.match(
+      saySection,
+      /> Conta ligada\. Ainda não tem endereço de publicação\.\n/
+    );
     assert.doesNotMatch(
       saySection,
       /Conta ligada\. Publicando em \{host\},?\s*(aberto pra empresa|open to the (company|org))/i
     );
+    assert.match(saySection, /Ask this before you run publish/);
+    assert.doesNotMatch(
+      saySection,
+      /never after announcing company-wide open/i
+    );
+    // No contradictory "company-wide wording belongs only here" that fights the restrict question
+    assert.doesNotMatch(
+      saySection,
+      /belongs \*\*only\*\* here|wording belongs \*\*only\*\*|Aberto pra empresa.\/ company-wide wording belongs \*\*only\*\*/i
+    );
+    assert.match(
+      saySection,
+      /Only the final success confirmation may state that the panel \*\*was\*\* published to the company/
+    );
+    assert.match(
+      saySection,
+      /The restrict question may mention the default \(open to the company, same email domain\) as the alternative to restricting/
+    );
+    assert.match(saySection, new RegExp(`${GITHUB_NPX_RE} doctor`));
+    assert.match(saySection, /Status: conta ligada \(email\)\./);
+    assert.match(saySection, /Status: conta não ligada nesta máquina\./);
+    assert.match(saySection, /# company-wide \(same email domain; no --to\)/);
+    assert.match(saySection, /# restricted to specific emails/);
     const linkedIdx = saySection.indexOf("Conta ligada. Publicando em {host}.");
+    const noHostIdx = saySection.indexOf(
+      "Conta ligada. Ainda não tem endereço de publicação."
+    );
     const restrictIdx = saySection.indexOf("Quer restringir a alguém?");
     const publishIdx = saySection.search(
       /npx --yes github:clovistx\/secure-publish publish/
     );
-    assert.ok(linkedIdx >= 0, "post-login line required");
+    assert.ok(linkedIdx >= 0, "post-login with host required");
+    assert.ok(noHostIdx >= 0, "no-host branch required");
     assert.ok(restrictIdx >= 0, "restrict ask required");
     assert.ok(publishIdx >= 0, "publish example required");
     assert.ok(
-      linkedIdx < restrictIdx && restrictIdx < publishIdx,
-      "order must be: Conta ligada → Quer restringir → publish (never announce company-wide open before asking)"
+      linkedIdx < restrictIdx && noHostIdx < restrictIdx && restrictIdx < publishIdx,
+      "order must be: Conta ligada (host or no-host) → Quer restringir → publish"
+    );
+    assert.match(
+      saySection,
+      /Only the network\/server line may say “Tenta de novo em instantes”/
     );
   });
 
   it("does not tell the agent to say token/KV/cookie/device code/session.json", () => {
     const saySection = skill.split("## What you say")[1]?.split("## Access")[0] ?? "";
     assert.doesNotMatch(saySection, /CLOUDFLARE_API_TOKEN|KV|cookie|device code|session\.json/i);
+  });
+
+  it("Never-claims Continuar como is authentication", () => {
+    assert.match(
+      skill,
+      /Never claim that a “Continuar como …” screen on the landing\/demo authenticates anyone/
+    );
   });
 });
 
