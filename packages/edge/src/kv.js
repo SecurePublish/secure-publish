@@ -421,8 +421,16 @@ export function buildAccessFromPatch(body, publisherEmail) {
 export { normalizeEmails, normalizeDomains };
 
 const DEVICE_TTL_SEC = 600;
+/** Cloudflare KV rejects expirationTtl below 60s. */
+const KV_MIN_TTL_SEC = 60;
 /** Publish-only credential. 12h, revocable. Not a browser cookie. */
 const PUBLISH_TOKEN_TTL_SEC = 60 * 60 * 12;
+
+function deviceRecordTtlSec(exp, now) {
+  const left = Math.floor(Number(exp) - now);
+  if (!Number.isFinite(left) || left < KV_MIN_TTL_SEC) return KV_MIN_TTL_SEC;
+  return Math.min(DEVICE_TTL_SEC, left);
+}
 
 function randomHex(byteLen) {
   const bytes = new Uint8Array(byteLen);
@@ -438,15 +446,94 @@ async function sha256Hex(value) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+const USER_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
+const BIND_FAIL_LIMIT = 5;
+const BIND_FAIL_GLOBAL_LIMIT = 50;
+const BIND_FAIL_WINDOW_SEC = 600;
+const GLOBAL_BIND_FAIL_KEY = "devbindfail:global";
+
+export function normalizeUserCode(raw) {
+  return String(raw ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]/g, "");
+}
+
+function formatUserCode(normalized) {
+  return `${normalized.slice(0, 4)}-${normalized.slice(4, 8)}`;
+}
+
+/** Unbiased draw from USER_CODE_ALPHABET via rejection sampling. */
+function randomUserCode() {
+  const n = USER_CODE_ALPHABET.length;
+  const rejectAt = 256 - (256 % n);
+  let out = "";
+  while (out.length < 8) {
+    const bytes = new Uint8Array(8);
+    crypto.getRandomValues(bytes);
+    for (const b of bytes) {
+      if (b >= rejectAt) continue;
+      out += USER_CODE_ALPHABET[b % n];
+      if (out.length === 8) break;
+    }
+  }
+  return out;
+}
+
 /**
- * One-time device login. The browser cookie stays HttpOnly; the CLI only
- * receives a publish token after the account owner finishes Google sign-in.
+ * One-time device login. device_code is the CLI polling secret; user_code is
+ * what the account owner types on /device. They are never the same value.
  */
 export async function createDeviceCode(kv) {
   const device_code = randomHex(32);
   const exp = Math.floor(Date.now() / 1000) + DEVICE_TTL_SEC;
-  await kv.put(`device:${device_code}`, JSON.stringify({ status: "pending", exp }));
-  return { device_code, expires_in: DEVICE_TTL_SEC, interval: 2 };
+  let userNorm = randomUserCode();
+  for (let i = 0; i < 8; i++) {
+    const existing = await kv.get(`devuser:${userNorm}`);
+    if (!existing) break;
+    userNorm = randomUserCode();
+  }
+  await kv.put(`device:${device_code}`, JSON.stringify({ status: "pending", exp }), {
+    expirationTtl: DEVICE_TTL_SEC,
+  });
+  await kv.put(`devuser:${userNorm}`, device_code, { expirationTtl: DEVICE_TTL_SEC });
+  return {
+    device_code,
+    user_code: formatUserCode(userNorm),
+    expires_in: DEVICE_TTL_SEC,
+    interval: 2,
+  };
+}
+
+export async function bindDeviceByUserCode(kv, userCodeRaw, email) {
+  const owner = String(email || "").trim().toLowerCase();
+  const failKey = `devbindfail:${owner}`;
+  const accountFails = Number(await kv.get(failKey)) || 0;
+  const globalFails = Number(await kv.get(GLOBAL_BIND_FAIL_KEY)) || 0;
+  if (accountFails >= BIND_FAIL_LIMIT || globalFails >= BIND_FAIL_GLOBAL_LIMIT) {
+    return { ok: false, status: 429, error: "device_code_rate_limited" };
+  }
+
+  async function invalid() {
+    await kv.put(failKey, String(accountFails + 1), { expirationTtl: BIND_FAIL_WINDOW_SEC });
+    await kv.put(GLOBAL_BIND_FAIL_KEY, String(globalFails + 1), {
+      expirationTtl: BIND_FAIL_WINDOW_SEC,
+    });
+    return { ok: false, status: 404, error: "device_code_invalid" };
+  }
+
+  const userNorm = normalizeUserCode(userCodeRaw);
+  if (!/^[BCDFGHJKLMNPQRSTVWXZ]{8}$/.test(userNorm)) {
+    return invalid();
+  }
+  const mapKey = `devuser:${userNorm}`;
+  const device_code = await kv.get(mapKey);
+  if (!device_code) return invalid();
+
+  const approved = await approveDeviceCode(kv, device_code, owner);
+  if (!approved.ok) return invalid();
+  await kv.delete(mapKey);
+  return { ok: true, email: owner };
 }
 
 export async function approveDeviceCode(kv, code, email) {
@@ -490,7 +577,8 @@ export async function approveDeviceCode(kv, code, email) {
   await kv.put(idxKey, JSON.stringify(hashes));
   await kv.put(
     key,
-    JSON.stringify({ status: "approved", exp: rec.exp, email: owner, accessToken, tokenExp })
+    JSON.stringify({ status: "approved", exp: rec.exp, email: owner, accessToken, tokenExp }),
+    { expirationTtl: deviceRecordTtlSec(rec.exp, now) }
   );
   return { ok: true, email: owner };
 }
@@ -519,7 +607,9 @@ export async function pollDeviceCode(kv, code) {
   const accessToken = rec.accessToken;
   const email = rec.email;
   const tokenExp = rec.tokenExp;
-  await kv.put(key, JSON.stringify({ status: "consumed", exp: rec.exp, email }));
+  await kv.put(key, JSON.stringify({ status: "consumed", exp: rec.exp, email }), {
+    expirationTtl: deviceRecordTtlSec(rec.exp, now),
+  });
   return { ok: true, accessToken, email, tokenExp };
 }
 

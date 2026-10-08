@@ -45,7 +45,10 @@ async function issuePublishToken(panels) {
   assert.equal(started.status, 200);
   const start = await started.json();
   assert.match(start.device_code, /^[a-f0-9]{64}$/);
-  assert.match(start.verification_url, /\/auth\/google\?device=[a-f0-9]{64}$/);
+  assert.match(start.user_code, /^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/);
+  assert.equal(start.verification_url, "https://app.securepublish.work/device");
+  assert.equal(start.verification_url.includes(start.device_code), false);
+  assert.equal(start.verification_url.includes(start.user_code), false);
 
   const pending = await worker.fetch(
     new Request("https://app.securepublish.work/api/device/token", {
@@ -62,7 +65,7 @@ async function issuePublishToken(panels) {
     new Request("https://app.securepublish.work/api/device/bind", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ device_code: start.device_code }),
+      body: JSON.stringify({ user_code: start.user_code }),
     }),
     env
   );
@@ -72,11 +75,12 @@ async function issuePublishToken(panels) {
     new Request("https://app.securepublish.work/api/device/bind", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ device_code: start.device_code }),
+      body: JSON.stringify({ user_code: start.user_code }),
     }),
     env
   );
-  assert.equal(again.status, 400);
+  assert.equal(again.status, 404);
+  assert.equal((await again.json()).error, "device_code_invalid");
 
   const polled = await worker.fetch(
     new Request("https://app.securepublish.work/api/device/token", {
@@ -509,7 +513,7 @@ describe("CLI Bearer is limited to POST /api/panels and PATCH …/name", () => {
       env
     );
     assert.equal(started.status, 200);
-    const { device_code } = await started.json();
+    const { user_code } = await started.json();
     const res = await worker.fetch(
       new Request(`${CONSOLE}/api/device/bind`, {
         method: "POST",
@@ -519,7 +523,7 @@ describe("CLI Bearer is limited to POST /api/panels and PATCH …/name", () => {
           authorization: `Bearer ${token}`,
           cookie,
         },
-        body: JSON.stringify({ device_code }),
+        body: JSON.stringify({ user_code }),
       }),
       env
     );
