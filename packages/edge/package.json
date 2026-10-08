@@ -8,12 +8,13 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "tail": "wrangler tail",
-    "test": "node --test test/acl.test.js test/api-host-csrf.test.js test/api-routes.test.js test/auth-providers.test.js test/dns.test.js test/github-email.test.js test/host-binding.test.js test/panel-names.test.js test/panel-session.test.js test/publish.test.js test/public-email-domain.test.js test/viewers-privacy.test.js"
+    "test": "node --test test/acl.test.js test/api-host-csrf.test.js test/api-routes.test.js test/auth-providers.test.js test/custom-domains.test.js test/dns.test.js test/github-email.test.js test/handoff.test.js test/hostname.test.js test/host-binding.test.js test/panel-names.test.js test/panel-session.test.js test/publish.test.js test/public-email-domain.test.js test/viewers-privacy.test.js"
   },
   "devDependencies": {
     "wrangler": "^3.99.0"
   },
   "dependencies": {
-    "jose": "^5.10.0"
+    "jose": "^5.10.0",
+    "tldts": "^7.4.18"
   }
 }

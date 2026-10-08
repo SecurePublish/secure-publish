@@ -22,9 +22,22 @@ import {
   lookupPanelId,
   panelPath,
   storedPanelName,
+  PANEL_ID_RE,
 } from "./kv.js";
+import {
+  requestHost,
+  isOwnZoneHost,
+  isWorkersDevHost,
+  isLoopbackHost,
+} from "./hostname.js";
+import {
+  recheckAllCustomHostnames,
+  tenantIsActiveCustom,
+} from "./custom-domain.js";
+import { handleAppHandoff, handleCustomerHandoff } from "./handoff.js";
 
-const PANEL_404_BODY = "Not found — invalid or unknown panel id.";
+/** Identical bytes for unknown panel ids AND unknown/unverified custom hosts. */
+export const UNKNOWN_PANEL_BODY = "Not found — invalid or unknown panel id.";
 
 function panelHeaders(extra = {}) {
   return {
@@ -32,6 +45,13 @@ function panelHeaders(extra = {}) {
     "x-robots-tag": "noindex, nofollow",
     ...extra,
   };
+}
+
+export function unknownPanelResponse() {
+  return new Response(UNKNOWN_PANEL_BODY, {
+    status: 404,
+    headers: panelHeaders({ "content-type": "text/plain; charset=utf-8" }),
+  });
 }
 
 async function resolvePanel(key, panels) {
@@ -42,45 +62,73 @@ async function resolvePanel(key, panels) {
   return { ok: true, id, record: decodeRecord(raw) };
 }
 
-/** Normalize Host header (or URL hostname). */
-function requestHost(request) {
-  let host = (request.headers.get("Host") || "").split(":")[0].toLowerCase();
-  if (!host) {
-    try {
-      host = new URL(request.url).hostname.toLowerCase();
-    } catch {
-      host = "";
-    }
-  }
-  return host;
-}
-
 /**
- * Host-header gate for custom domains (Marcus #5).
- * Subdomain / workers.dev always OK. Custom host only if tenant.customVerified.
+ * Host-header gate. Our zone / workers.dev / loopback always OK.
+ * Any other host: only if KV says customVerified AND status active.
+ * Never trust Cloudflare status alone. Unknown/unverified → identical panel 404.
  */
 async function assertHostAllowed(request, env) {
   const host = requestHost(request);
   if (!host) return { ok: true };
-  if (host.endsWith(".workers.dev") || host.endsWith(".securepublish.work")) {
+  if (isWorkersDevHost(host) || isOwnZoneHost(host) || isLoopbackHost(host)) {
     return { ok: true };
   }
-  if (host === "localhost" || host === "127.0.0.1") return { ok: true };
 
   const owner = await env.PANELS.get(`host:custom:${host}`);
   if (!owner) {
-    return { ok: false, status: 404, body: "Unknown host.\n" };
+    return { ok: false, identical404: true };
   }
   const tenant = await getTenant(env.PANELS, owner);
-  if (!tenant?.customVerified) {
-    return {
-      ok: false,
-      status: 403,
-      body:
-        "Custom domain reserved but not verified. Complete DNS ownership check before serving.\n",
-    };
+  if (!tenantIsActiveCustom(tenant)) {
+    return { ok: false, identical404: true };
+  }
+  const claimed = String(tenant.customHostname || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\.+$/, "");
+  if (claimed !== host) {
+    return { ok: false, identical404: true };
   }
   return { ok: true };
+}
+
+function isPanelPath(pathname) {
+  const parts = String(pathname || "")
+    .split("/")
+    .filter(Boolean);
+  return parts.length >= 1 && PANEL_ID_RE.test(parts[0]);
+}
+
+/**
+ * Old subdomain → 301 to the KV custom hostname (never request Host).
+ * Panel paths only. No 301 unless status active. Cache-Control: private, no-store.
+ */
+async function subdomainCustomRedirect(request, env) {
+  const url = new URL(request.url);
+  const host = requestHost(request);
+  if (!isOwnZoneHost(host) || host === "securepublish.work") return null;
+  if (RESERVED_PRODUCT_HOSTS.has(host)) return null;
+  if (!isPanelPath(url.pathname)) return null;
+  const slug = host.endsWith(".securepublish.work")
+    ? host.slice(0, -".securepublish.work".length)
+    : "";
+  if (!slug || slug.includes(".")) return null;
+  const email = await env.PANELS.get(`host:sub:${slug}`);
+  if (!email) return null;
+  const tenant = await getTenant(env.PANELS, email);
+  if (!tenantIsActiveCustom(tenant) || !tenant.customHostname) return null;
+  const destHost = String(tenant.customHostname)
+    .trim()
+    .toLowerCase()
+    .replace(/\.+$/, "");
+  if (!destHost) return null;
+  return new Response(null, {
+    status: 301,
+    headers: {
+      location: `https://${destHost}${url.pathname}`,
+      "cache-control": "private, no-store",
+    },
+  });
 }
 
 /**
@@ -111,7 +159,7 @@ const BASE_SUFFIX = ".securepublish.work";
 export async function assertPanelHostBinding(request, env, panelRecord) {
   const host = requestHost(request);
   if (!host) return { ok: true };
-  if (host.endsWith(".workers.dev") || host === "localhost" || host === "127.0.0.1") {
+  if (isWorkersDevHost(host) || isLoopbackHost(host)) {
     return { ok: true };
   }
 
@@ -172,20 +220,28 @@ export default {
     const pagesProxy = await proxyReservedHost(request, url);
     if (pagesProxy) return pagesProxy;
 
+    if (url.pathname === "/auth/handoff" || url.pathname === "/auth/handoff/") {
+      return handleAppHandoff(request, env);
+    }
+    if (url.pathname === "/_auth/handoff" || url.pathname === "/_auth/handoff/") {
+      return handleCustomerHandoff(request, env);
+    }
+
     const authRes = await handleAuthRoutes(request, env);
     if (authRes) return authRes;
 
     const apiRes = await handleApiRoutes(request, env);
     if (apiRes) return apiRes;
 
+    const redirect = await subdomainCustomRedirect(request, env);
+    if (redirect) return redirect;
+
     const hostGate = await assertHostAllowed(request, env);
     if (!hostGate.ok) {
-      const partsEarly = url.pathname.split("/").filter(Boolean);
-      const headers = { "content-type": "text/plain; charset=utf-8" };
-      if (partsEarly.length) Object.assign(headers, panelHeaders());
+      if (hostGate.identical404) return unknownPanelResponse();
       return new Response(hostGate.body || "Forbidden\n", {
         status: hostGate.status || 403,
-        headers,
+        headers: panelHeaders({ "content-type": "text/plain; charset=utf-8" }),
       });
     }
 
@@ -216,10 +272,7 @@ export default {
 
     const panel = await resolvePanel(parts[0], env.PANELS);
     if (!panel.ok) {
-      return new Response(PANEL_404_BODY, {
-        status: 404,
-        headers: panelHeaders({ "content-type": "text/plain; charset=utf-8" }),
-      });
+      return unknownPanelResponse();
     }
 
     const bind = await assertPanelHostBinding(request, env, panel.record);
@@ -297,5 +350,11 @@ export default {
       status: 200,
       headers,
     });
+  },
+
+  async scheduled(_event, env, ctx) {
+    const run = recheckAllCustomHostnames(env);
+    if (ctx?.waitUntil) ctx.waitUntil(run);
+    await run;
   },
 };

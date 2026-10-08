@@ -22,10 +22,6 @@ import {
   getViews,
   getTenant,
   claimSubdomain,
-  claimCustomHostname,
-  clearPendingCustomHostname,
-  verifyCustomHostname,
-  customVerifyChallenge,
   accessToApiMode,
   accessToAllowlist,
   formatPublishedLabel,
@@ -44,6 +40,13 @@ import {
   userFromPublishToken,
   revokePublishToken,
 } from "./kv.js";
+import {
+  claimCustomHostname,
+  verifyCustomHostname,
+  deleteCustomHostnameClaim,
+  tenantIsActiveCustom,
+} from "./custom-domain.js";
+import { customDomainsEnabled, customDnsRecords, validateCustomHostname } from "./hostname.js";
 
 export { consoleOrigins };
 
@@ -307,13 +310,18 @@ function normalizeHost(host) {
 
 async function resolveHost(kv, email, env) {
   const tenant = await getTenant(kv, email);
-  if (tenant?.customHostname && tenant.customVerified) {
+  if (tenantIsActiveCustom(tenant)) {
     return normalizeHost(tenant.customHostname);
   }
-  if (tenant?.host) return normalizeHost(tenant.host);
   if (tenant?.slug) {
     const slug = String(tenant.slug).trim();
     if (slug) return `${slug}.securepublish.work`;
+  }
+  if (tenant?.host) {
+    const h = normalizeHost(tenant.host);
+    if (h && (h.endsWith(".securepublish.work") || !tenant.customHostname)) {
+      return h;
+    }
   }
   // Optional env hint only — still must be non-empty.
   return normalizeHost(env.DEFAULT_PANEL_HOST);
@@ -322,10 +330,11 @@ async function resolveHost(kv, email, env) {
 async function handleMe(request, env, { email, domain, idp }) {
   const host = await resolveHost(env.PANELS, email, env);
   const tenant = await getTenant(env.PANELS, email);
+  const flagOn = customDomainsEnabled(env);
   const customHostname = tenant?.customHostname
     ? String(tenant.customHostname).trim().toLowerCase() || null
     : null;
-  const customVerified = Boolean(tenant?.customVerified);
+  const customVerified = Boolean(tenant?.customVerified) && tenant?.customStatus === "active";
   const body = {
     email,
     idp,
@@ -335,10 +344,15 @@ async function handleMe(request, env, { email, domain, idp }) {
     host,
     customHostname,
     customVerified,
+    customDomainsEnabled: flagOn,
   };
-  if (customHostname && !customVerified) {
-    const token = tenant?.customVerifyToken || null;
-    body.verify = customVerifyChallenge(customHostname, token);
+  // When the flag is off, never include records (cname.securepublish.work must not appear).
+  if (flagOn && customHostname) {
+    body.customStatus = tenant.customStatus || "pending_dns";
+    body.customRecords = customDnsRecords(
+      customHostname,
+      tenant.customVerifyToken || ""
+    );
   }
   return json(body, 200, request, env);
 }
@@ -721,25 +735,31 @@ async function handleSubdomain(request, env, { email }) {
 }
 
 async function handleCustom(request, env, { email }) {
+  if (!customDomainsEnabled(env)) {
+    return err("custom_domains_disabled", 403, request, env);
+  }
   let body;
   try {
     body = await request.json();
   } catch {
     return err("invalid_json", 400, request, env);
   }
-  // (5) Claim only — ownership verification required before serving as host
-  const result = await claimCustomHostname(env.PANELS, body.hostname, email);
+  // Validate before ANY KV write or Cloudflare call.
+  const v = validateCustomHostname(body?.hostname);
+  if (!v.ok) {
+    return err(v.error, 400, request, env);
+  }
+  const result = await claimCustomHostname(env, v.hostname, email);
   if (!result.ok) {
     return err(result.error || "error", result.status || 400, request, env);
   }
-  // Contract: { host }. Until verified, return current serving host (subdomain) if any.
   return json(
     {
-      // Serving host only if already claimed (subdomain); never "" .
       host: normalizeHost(result.host),
       customHostname: result.customHostname,
       customVerified: false,
-      verify: result.verify,
+      status: result.status,
+      records: result.records,
     },
     200,
     request,
@@ -748,7 +768,7 @@ async function handleCustom(request, env, { email }) {
 }
 
 async function handleCustomDelete(request, env, { email }) {
-  const result = await clearPendingCustomHostname(env.PANELS, email);
+  const result = await deleteCustomHostnameClaim(env, email);
   if (!result.ok) {
     return err(result.error || "error", result.status || 400, request, env);
   }
@@ -756,28 +776,26 @@ async function handleCustomDelete(request, env, { email }) {
 }
 
 async function handleCustomVerify(request, env, { email }) {
-  // Body optional/ignored — uses claimed tenant.customHostname + session email.
-  const result = await verifyCustomHostname(env.PANELS, email, {
+  if (!customDomainsEnabled(env)) {
+    return err("custom_domains_disabled", 403, request, env);
+  }
+  const result = await verifyCustomHostname(env, email, {
     lookupTxt: env.__lookupTxt,
+    fetchFn: env.__fetch,
   });
   if (!result.ok) {
     return json(
-      {
-        error: result.error || "error",
-        verify: result.verify,
-      },
-      result.status || 400,
+      { error: result.error || "error" },
+      result.statusCode || result.status || 400,
       request,
       env
     );
   }
   return json(
     {
-      ok: true,
-      host: result.host,
+      status: result.status,
+      records: result.records,
       customHostname: result.customHostname,
-      customVerified: true,
-      verify: result.verify,
     },
     200,
     request,
