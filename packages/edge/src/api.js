@@ -2,7 +2,8 @@
  * Console ↔ Worker API (Cameron contract / API-CONTRACT.md).
  *
  * Marcus checklist:
- * 1) Every /api/* requires SSO session
+ * 1) Every /api/* requires SSO session (CLI Bearer only on POST /api/panels
+ *    and PATCH /api/panels/:id/name; any other /api/* with Bearer → 401)
  * 2) PATCH access = publisher only
  * 3) CORS = exact CONSOLE_ORIGIN + credentials
  * 4) viewers[] PII only for the panel publisher (email === publisherEmail)
@@ -92,6 +93,19 @@ function unknownPath404() {
       "x-robots-tag": "noindex, nofollow",
     },
   });
+}
+
+/**
+ * CLI publish credential (`Authorization: Bearer`) is accepted only on
+ * POST /api/panels and PATCH /api/panels/:id/name. Presence on any other
+ * /api/* is 401 — never a cookie-session fallback.
+ * POST /api/session/revoke is handled before the auth block.
+ */
+function bearerAllowedOnRoute(method, pathname) {
+  const m = String(method || "").toUpperCase();
+  if (m === "POST" && pathname === "/api/panels") return true;
+  if (m === "PATCH" && /^\/api\/panels\/[^/]+\/name\/?$/.test(pathname)) return true;
+  return false;
 }
 
 /**
@@ -222,17 +236,21 @@ export async function handleApiRoutes(request, env) {
   }
 
   // Bearer present → never use the session cookie. Invalid/unknown/expired → 401.
+  // Disallowed Bearer routes 401 immediately (cookie ignored).
   const authHeader = request.headers.get("authorization") || "";
   let email;
   let domain;
   let idp;
   if (/^Bearer\b/i.test(authHeader.trim())) {
+    if (!bearerAllowedOnRoute(request.method, url.pathname)) {
+      return err("unauthorized", 401, request, env);
+    }
     const match = authHeader.match(/^Bearer\s+(\S+)/i);
     const tokenUser = match
       ? await userFromPublishToken(env.PANELS, match[1])
       : null;
     if (!tokenUser?.email) return err("unauthorized", 401, request, env);
-    email = tokenUser.email;
+    email = String(tokenUser.email || "").trim().toLowerCase();
     idp = "device";
   } else {
     const sso = await requireSsoSession(request, env, { api: true });

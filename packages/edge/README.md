@@ -25,13 +25,13 @@ Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)
 
 ### Marcus checklist
 
-1. Every `/api/*` requires SSO session (401 without cookie / Access JWT).
+1. Every `/api/*` requires SSO session (401 without cookie / Access JWT). CLI Bearer is accepted only on `POST /api/panels` and `PATCH /api/panels/:id/name`; any other `/api/*` with `Authorization: Bearer` is 401 (no cookie fallback). `POST /api/session/revoke` is before that rule.
 2. `PATCH …/access` = publisher only (403 otherwise).
 3. CORS = exact `CONSOLE_ORIGIN` (comma-separated, `new URL().origin`) + `credentials`.
 4. `viewers[]` is PII — publisher-only (session email equals `publisherEmail`). Colleagues still get `views` + `path`.
 5. Custom domain: reserved via API; Host gate serves only when `customVerified` **and** `customStatus === "active"` (never trust Cloudflare status alone). Unknown/unverified hosts return the same 404 body as an unknown panel id.
 6. `/api/*` only when `Host` is the app host (`APP_HOST` or `OAUTH_CALLBACK_ORIGIN`). Other hosts: same 404 as an unknown path.
-7. Cookie mutations (`POST`/`PATCH`/`PUT`/`DELETE`): exact console `Origin` + `Content-Type: application/json`. Else `403 csrf_origin` / `csrf_content_type`. Bearer and `/api/device/code|token` exempt; `/api/device/bind` is not.
+7. Cookie mutations (`POST`/`PATCH`/`PUT`/`DELETE`): exact console `Origin` + `Content-Type: application/json`. Else `403 csrf_origin` / `csrf_content_type`. Bearer (only on `POST /api/panels` and `PATCH …/name`) and `/api/device/code|token` exempt; `/api/device/bind` is not.
 
 Lock A: `mode=company` = email **domain** after SSO (not Workspace/Entra/GitHub Org).
 

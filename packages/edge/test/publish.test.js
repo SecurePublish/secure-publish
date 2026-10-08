@@ -323,22 +323,34 @@ describe("Bearer precedence over session cookie", () => {
   }
 
   it("(a) valid Bearer + valid cookie → identity from Bearer", async () => {
-    const panels = memoryKv();
+    const panels = memoryKv({
+      "tenant:user:dev@localhost": JSON.stringify({
+        email: "dev@localhost",
+        slug: "wise",
+        host: "wise.securepublish.work",
+      }),
+      "host:sub:wise": "dev@localhost",
+    });
     const token = await issuePublishToken(panels);
     const env = cookieEnv(panels);
     const cookie = await cookieHeader(env);
     const res = await worker.fetch(
-      new Request(`${CONSOLE}/api/me`, {
+      new Request(`${CONSOLE}/api/panels`, {
+        method: "POST",
         headers: {
           Origin: CONSOLE,
+          "content-type": "application/json",
           authorization: `Bearer ${token}`,
           cookie,
         },
+        body: JSON.stringify({ html: "<p>via bearer</p>" }),
       }),
       env
     );
-    assert.equal(res.status, 200);
-    assert.equal((await res.json()).email, "dev@localhost");
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    const stored = JSON.parse(panels._store.get(body.id));
+    assert.equal(stored.publisherEmail, "dev@localhost");
   });
 
   it("(b) invalid Bearer + valid cookie → 401", async () => {
@@ -392,5 +404,224 @@ describe("Bearer precedence over session cookie", () => {
     );
     assert.equal(res.status, 401);
     assert.equal((await res.json()).error, "unauthorized");
+  });
+});
+
+function seedOwnedPanel(panels, id, email) {
+  const domain = email.split("@")[1];
+  panels._store.set(
+    id,
+    JSON.stringify({
+      v: 1,
+      title: "panel",
+      publishedAt: "2026-01-01T00:00:00.000Z",
+      publisherEmail: email,
+      access: { mode: "company", domains: [domain] },
+      html: "<p>x</p>",
+    })
+  );
+}
+
+function overwritePubtokEmail(panels, email) {
+  for (const [key, value] of panels._store.entries()) {
+    if (!key.startsWith("pubtok:") || key.startsWith("pubtok-idx:")) continue;
+    const rec = JSON.parse(value);
+    rec.email = email;
+    panels._store.set(key, JSON.stringify(rec));
+    return;
+  }
+  throw new Error("missing pubtok");
+}
+
+describe("CLI Bearer is limited to POST /api/panels and PATCH …/name", () => {
+  const CONSOLE = "https://app.securepublish.work";
+  const SECRET = "test-secret-test-secret-test-secret";
+  const PANEL_ID = "k7f3qx2abc";
+
+  function cookieEnv(panels) {
+    return {
+      PANELS: panels,
+      SESSION_SECRET: SECRET,
+      GOOGLE_CLIENT_ID: "google-client",
+      GOOGLE_CLIENT_SECRET: "google-secret",
+      CONSOLE_ORIGIN: CONSOLE,
+      OAUTH_ALLOWED_DOMAINS: "wises.com.br",
+    };
+  }
+
+  async function cookieHeader(env, email = "ana@wises.com.br") {
+    const setCookie = await mintSessionCookie(
+      {
+        email,
+        provider: "google",
+        exp: Math.floor(Date.now() / 1000) + 600,
+      },
+      env.SESSION_SECRET,
+      env,
+      `${CONSOLE}/_auth/callback/google`
+    );
+    return setCookie.split(";")[0];
+  }
+
+  function ownerTenant() {
+    return memoryKv({
+      "tenant:user:dev@localhost": JSON.stringify({
+        email: "dev@localhost",
+        slug: "wise",
+        host: "wise.securepublish.work",
+      }),
+      "host:sub:wise": "dev@localhost",
+    });
+  }
+
+  it("valid Bearer on PATCH …/access → 401 even with cookie + Origin/JSON", async () => {
+    const panels = ownerTenant();
+    seedOwnedPanel(panels, PANEL_ID, "ana@wises.com.br");
+    const token = await issuePublishToken(panels);
+    const env = cookieEnv(panels);
+    const cookie = await cookieHeader(env);
+    const res = await worker.fetch(
+      new Request(`${CONSOLE}/api/panels/${PANEL_ID}/access`, {
+        method: "PATCH",
+        headers: {
+          Origin: CONSOLE,
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+          cookie,
+        },
+        body: JSON.stringify({ mode: "allowlist", allowlist: ["bia@wises.com.br"] }),
+      }),
+      env
+    );
+    assert.equal(res.status, 401);
+    assert.equal((await res.json()).error, "unauthorized");
+    const stored = JSON.parse(panels._store.get(PANEL_ID));
+    assert.equal(stored.access.mode, "company");
+  });
+
+  it("valid Bearer on POST /api/device/bind → 401 even with cookie + Origin/JSON", async () => {
+    const panels = memoryKv();
+    const token = await issuePublishToken(panels);
+    const env = cookieEnv(panels);
+    const cookie = await cookieHeader(env);
+    const started = await worker.fetch(
+      new Request(`${CONSOLE}/api/device/code`, { method: "POST" }),
+      env
+    );
+    assert.equal(started.status, 200);
+    const { device_code } = await started.json();
+    const res = await worker.fetch(
+      new Request(`${CONSOLE}/api/device/bind`, {
+        method: "POST",
+        headers: {
+          Origin: CONSOLE,
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+          cookie,
+        },
+        body: JSON.stringify({ device_code }),
+      }),
+      env
+    );
+    assert.equal(res.status, 401);
+    assert.equal((await res.json()).error, "unauthorized");
+  });
+
+  it("valid Bearer still works on POST /api/panels and PATCH …/name", async () => {
+    const panels = ownerTenant();
+    seedOwnedPanel(panels, PANEL_ID, "dev@localhost");
+    const token = await issuePublishToken(panels);
+    const env = cookieEnv(panels);
+
+    const published = await worker.fetch(
+      new Request(`${CONSOLE}/api/panels`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ html: "<p>cli publish</p>" }),
+      }),
+      env
+    );
+    assert.equal(published.status, 201);
+    const publishedBody = await published.json();
+    assert.equal(
+      JSON.parse(panels._store.get(publishedBody.id)).publisherEmail,
+      "dev@localhost"
+    );
+
+    const renamed = await worker.fetch(
+      new Request(`${CONSOLE}/api/panels/${PANEL_ID}/name`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: "Performance Outubro" }),
+      }),
+      env
+    );
+    assert.equal(renamed.status, 200);
+    const renamedBody = await renamed.json();
+    assert.equal(renamedBody.name, "performance-outubro");
+    assert.equal(renamedBody.path, `/${PANEL_ID}/performance-outubro`);
+  });
+
+  it("POST /api/session/revoke with valid Bearer → 2xx, then token 401 on POST /api/panels", async () => {
+    const panels = ownerTenant();
+    const token = await issuePublishToken(panels);
+    const env = cookieEnv(panels);
+
+    const revoked = await worker.fetch(
+      new Request(`${CONSOLE}/api/session/revoke`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      env
+    );
+    assert.ok(revoked.status >= 200 && revoked.status < 300);
+
+    const after = await worker.fetch(
+      new Request(`${CONSOLE}/api/panels`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ html: "<p>again</p>" }),
+      }),
+      env
+    );
+    assert.equal(after.status, 401);
+  });
+
+  it("Bearer stored email with uppercase/spaces resolves to lowercase trimmed publisherEmail", async () => {
+    const panels = memoryKv({
+      "tenant:user:ana@wises.com.br": JSON.stringify({
+        email: "ana@wises.com.br",
+        slug: "wise",
+        host: "wise.securepublish.work",
+      }),
+      "host:sub:wise": "ana@wises.com.br",
+    });
+    const token = await issuePublishToken(panels);
+    overwritePubtokEmail(panels, "  Ana@Wises.com.br  ");
+    const env = cookieEnv(panels);
+    const res = await worker.fetch(
+      new Request(`${CONSOLE}/api/panels`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ html: "<p>norm</p>" }),
+      }),
+      env
+    );
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    const stored = JSON.parse(panels._store.get(body.id));
+    assert.equal(stored.publisherEmail, "ana@wises.com.br");
   });
 });
