@@ -12,7 +12,7 @@ Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)
 | GET | `/api/me` | `{ email, idp, domain, host, customHostname, customVerified }` (+ `verify` when pending) — SSO required |
 | GET | `/api/panels?scope=mine\|company` | `{ host, panels: [{ id, title, … }] }` — SSO; `title` fallback `"untitled"`; `viewers[]` only after auth |
 | PATCH | `/api/panels/:id/access` | `{ mode, allowlist[], sendInvite? }` — **publisher only** |
-| PUT | `/api/hosting/subdomain` | `{ slug }` → `{ host }` |
+| PUT | `/api/hosting/subdomain` | `{ slug }` → `{ host }`. `400 reserved_slug` for product/infra names |
 | PUT | `/api/hosting/custom` | `{ hostname }` → claim; TXT `sp-verify=<opaque-token>`; **not served until verified** |
 | DELETE | `/api/hosting/custom` | clear **unverified** pending claim only (`404` / `409` if none / verified) |
 | POST | `/api/hosting/custom/verify` | DoH TXT `_secure-publish.<host>` = stored opaque token → `customVerified` + switch `host` |

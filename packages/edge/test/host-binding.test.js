@@ -66,12 +66,18 @@ describe("assertPanelHostBinding — unit", () => {
 
   it("reserved product hosts skip subdomain lock", async () => {
     const env = { PANELS: memoryKv() };
-    const r = await assertPanelHostBinding(
-      req(`https://app.securepublish.work/${PANEL_ID}`, "app.securepublish.work"),
-      env,
-      panelRecord()
-    );
-    assert.equal(r.ok, true);
+    for (const host of [
+      "app.securepublish.work",
+      "www.securepublish.work",
+      "securepublish.work",
+    ]) {
+      const r = await assertPanelHostBinding(
+        req(`https://${host}/${PANEL_ID}`, host),
+        env,
+        panelRecord()
+      );
+      assert.equal(r.ok, true, host);
+    }
   });
 
   it("missing host:sub lock → deny", async () => {
@@ -271,3 +277,83 @@ describe("panel serve — fail-closed host binding", () => {
     assert.equal(bad.status, 404);
   });
 });
+
+/**
+ * Claim-blocked infra hosts (api/admin/auth/login/cname) are NOT product hosts.
+ * Without a host:sub lock they must 404 fail-closed — never skip binding (that
+ * would serve any panel on api.securepublish.work) and never OAuth-redirect
+ * toward serving the HTML.
+ */
+describe("claim-reserved infra hosts — fail-closed panel serve", () => {
+  const INFRA_HOSTS = ["api", "admin", "auth", "login", "cname"];
+
+  for (const slug of INFRA_HOSTS) {
+    it(`${slug}.securepublish.work/{id} → 404, not HTML, no login redirect`, async () => {
+      const env = {
+        PANELS: memoryKv({
+          [PANEL_ID]: JSON.stringify(panelRecord()),
+        }),
+        CONSOLE_ORIGIN: "https://console.pages.dev",
+        OAUTH_ALLOWED_DOMAINS: "localhost",
+      };
+      const host = `${slug}.securepublish.work`;
+      const res = await worker.fetch(req(`https://${host}/${PANEL_ID}`, host), env);
+      assert.equal(res.status, 404);
+      assert.equal(res.headers.get("location"), null);
+      const body = await res.text();
+      assert.equal(body.includes(PANEL_HTML), false);
+      assert.match(body, /host not bound/i);
+    });
+  }
+
+  it("api.securepublish.work does not skip host binding the way app. does", async () => {
+    const env = { PANELS: memoryKv() };
+    const api = await assertPanelHostBinding(
+      req(`https://api.securepublish.work/${PANEL_ID}`, "api.securepublish.work"),
+      env,
+      panelRecord()
+    );
+    assert.equal(api.ok, false);
+    assert.equal(api.status, 404);
+
+    const app = await assertPanelHostBinding(
+      req(`https://app.securepublish.work/${PANEL_ID}`, "app.securepublish.work"),
+      env,
+      panelRecord()
+    );
+    assert.equal(app.ok, true);
+  });
+});
+
+describe("claimSubdomain — reserved_slug (direct)", () => {
+  it("APP is reserved; KV unchanged", async () => {
+    const kv = memoryKv();
+    const result = await claimSubdomain(kv, "APP", "dev@localhost");
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 400);
+    assert.equal(result.error, "reserved_slug");
+    assert.equal(await kv.get("host:sub:app"), null);
+    assert.equal(await kv.get("tenant:user:dev@localhost"), null);
+  });
+
+  it("wise remains claimable", async () => {
+    const kv = memoryKv();
+    const result = await claimSubdomain(kv, "wise", "dev@localhost");
+    assert.equal(result.ok, true);
+    assert.equal(result.host, "wise.securepublish.work");
+  });
+
+  it("reserved claim does not drop an existing tenant slug", async () => {
+    const kv = memoryKv();
+    const first = await claimSubdomain(kv, "wise", "dev@localhost");
+    assert.equal(first.ok, true);
+    const blocked = await claimSubdomain(kv, "app", "dev@localhost");
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.error, "reserved_slug");
+    assert.equal(await kv.get("host:sub:wise"), "dev@localhost");
+    assert.equal(await kv.get("host:sub:app"), null);
+    const tenant = JSON.parse(await kv.get("tenant:user:dev@localhost"));
+    assert.equal(tenant.slug, "wise");
+  });
+});
+
