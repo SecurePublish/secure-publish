@@ -222,7 +222,12 @@ export default {
       });
     }
 
-    const acl = checkPanelAccess(sso.user, panel.record.access, env);
+    const acl = checkPanelAccess(
+      sso.user,
+      panel.record.access,
+      env,
+      panel.record.publisherEmail
+    );
     if (!acl.ok) {
       return new Response(accessDeniedBody(acl.reason), {
         status: 403,
