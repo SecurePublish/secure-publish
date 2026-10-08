@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { main } from "../src/cli.js";
+import { printCliError } from "../src/errors.js";
 
 main(process.argv.slice(2)).catch((err) => {
-  console.error(`Error: ${err.message || err}`);
+  printCliError(err);
   process.exit(1);
 });

@@ -16,11 +16,14 @@ import {
   publishSuccessMessage,
   normalizeDomains,
 } from "./acl.js";
+import { npxCmd } from "./npx-cli.js";
+import { CliError, codeFromApiError, isMachineErrorCode } from "./errors.js";
+import { assertNpmEngine } from "./npm-engine.js";
 
-const CLI = "securepublish-cli";
+const BIN_NAME = "securepublish-cli";
 
 const HELP = `
-${CLI} — publish AI HTML dashboards behind company SSO
+${BIN_NAME} — publish AI HTML dashboards behind company SSO
 
 Auth model:
   The URL path is the panel id (KV lookup only) — NOT a credential.
@@ -32,14 +35,15 @@ Auth model:
     --to a@x,b@y       explicit email allowlist (still requires SSO)
 
 Usage:
-  ${CLI} login
-  ${CLI} publish <file.html> [--title "..."] [--to email,email] [--mock]
-  ${CLI} logout
-  ${CLI} list [--remote]
-  ${CLI} revoke <key>
-  ${CLI} doctor
-  ${CLI} mock-serve [--port 8787]
-  ${CLI} help
+  ${npxCmd("login")}
+  ${npxCmd("publish <file.html> [--title \"...\"] [--to email,email] [--mock]")}
+  ${npxCmd("logout")}
+  ${npxCmd("list [--remote]")}
+  ${npxCmd("revoke <key>")}
+  ${npxCmd("doctor")}
+  ${npxCmd("status")}
+  ${npxCmd("mock-serve [--port 8787]")}
+  ${npxCmd("help")}
 
 Sign in with Google via \`login\`. Publish uses that account.
 Do not set CLOUDFLARE_API_TOKEN for publish.
@@ -99,10 +103,77 @@ function parseArgs(argv) {
 function requireCf(cfg) {
   const missing = configHints(cfg);
   if (missing.length) {
-    throw new Error(
-      `Missing config: ${missing.join(", ")}\nRun: ${CLI} doctor`
+    throw new CliError(
+      "missing_config",
+      `Missing config: ${missing.join(", ")}\nRun: ${npxCmd("doctor")}`
     );
   }
+}
+
+function looksLikeHtml(html) {
+  return /<(?:!doctype\s+html|html|head|body|div|span|p|table|section|article|main|h[1-6]|ul|ol|header|footer|nav|pre|code|form|button|a)\b/i.test(
+    html
+  );
+}
+
+function isEmailToken(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+}
+
+async function apiFetch(url, init) {
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: init?.signal || AbortSignal.timeout(20_000),
+    });
+  } catch {
+    throw new CliError(
+      "network_error",
+      "Não consegui publicar agora. Tenta de novo em instantes."
+    );
+  }
+}
+
+async function apiFetchLogin(url, init) {
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: init?.signal || AbortSignal.timeout(20_000),
+    });
+  } catch {
+    throw new CliError(
+      "network_error",
+      "Não consegui ligar a conta agora. Tenta de novo em instantes."
+    );
+  }
+}
+
+function publishRetryMessage(host) {
+  const where = host ? ` A conta está ligada em ${host}.` : "";
+  return `Não consegui publicar agora.${where} Tenta de novo em instantes.`;
+}
+
+function publishApiMessage(code, host, filePath) {
+  if (code === "session_expired") {
+    return `Sessão expirada nesta máquina. Rode ${npxCmd("login")}.`;
+  }
+  if (code === "not_logged_in") {
+    return `Conta não ligada nesta máquina. Rode ${npxCmd("login")}.`;
+  }
+  if (code === "no_host") {
+    return "Ainda não tem endereço de publicação.";
+  }
+  if (code === "html_too_large") {
+    return "HTML is too large (max 1.5MB).";
+  }
+  if (code === "invalid_email") {
+    return "Inclua pelo menos um e-mail em --to (ex.: --to ana@empresa.com)";
+  }
+  if (code === "company_requires_work_domain") {
+    const fileHint = filePath ? path.basename(filePath) : "<file.html>";
+    return `Contas de domínio público não publicam pra toda a empresa. Passe --to com os e-mails de quem pode ver: ${npxCmd(`publish ${fileHint} --to email,email`)}`;
+  }
+  return publishRetryMessage(host);
 }
 
 function publicUrl(cfg, key) {
@@ -224,6 +295,7 @@ function clearPublishSession() {
 }
 
 function openLoginUrl(url) {
+  if (process.env.SECURE_PUBLISH_NO_BROWSER === "1") return;
   const cmd = process.platform === "darwin" ? "open" : "xdg-open";
   try {
     const child = spawn(cmd, [url], { stdio: "ignore", detached: true });
@@ -240,13 +312,19 @@ function sleep(ms) {
 
 async function cmdLogin(cfg) {
   const apiBase = apiBaseOf(cfg);
-  const startRes = await fetch(`${apiBase}/api/device/code`, {
+  const startRes = await apiFetchLogin(`${apiBase}/api/device/code`, {
     method: "POST",
     headers: { accept: "application/json" },
   });
   const start = await startRes.json().catch(() => ({}));
   if (!startRes.ok || !start.verification_url || !start.device_code) {
-    throw new Error("Não consegui abrir o login agora. Tenta de novo em instantes.");
+    const code = startRes.ok
+      ? "server_error"
+      : codeFromApiError(start.error, startRes.status);
+    throw new CliError(
+      code,
+      "Não consegui ligar a conta agora. Tenta de novo em instantes."
+    );
   }
   console.log(start.verification_url);
   openLoginUrl(start.verification_url);
@@ -254,7 +332,7 @@ async function cmdLogin(cfg) {
   const deadline = Date.now() + (Number(start.expires_in) || 600) * 1000;
   while (Date.now() < deadline) {
     await sleep(interval);
-    const pollRes = await fetch(`${apiBase}/api/device/token`, {
+    const pollRes = await apiFetchLogin(`${apiBase}/api/device/token`, {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify({ device_code: start.device_code }),
@@ -275,9 +353,18 @@ async function cmdLogin(cfg) {
       return;
     }
     if (poll.error === "authorization_pending") continue;
-    throw new Error("Não consegui ligar a conta agora. Tenta de novo em instantes.");
+    const code = isMachineErrorCode(poll.error)
+      ? codeFromApiError(poll.error, pollRes.status)
+      : "server_error";
+    throw new CliError(
+      code,
+      "Não consegui ligar a conta agora. Tenta de novo em instantes."
+    );
   }
-  throw new Error("Não consegui ligar a conta agora. Tenta de novo em instantes.");
+  throw new CliError(
+    "expired_token",
+    "Não consegui ligar a conta agora. Tenta de novo em instantes."
+  );
 }
 
 async function cmdLogout(cfg) {
@@ -300,14 +387,17 @@ async function cmdLogout(cfg) {
 async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
   const session = readPublishSession();
   if (!session) {
-    throw new Error(`Conta não ligada nesta máquina. Rode ${CLI} login.`);
+    throw new CliError(
+      "not_logged_in",
+      `Conta não ligada nesta máquina. Rode ${npxCmd("login")}.`
+    );
   }
   const apiBase = (session.apiBase || apiBaseOf(cfg)).replace(/\/$/, "");
   const title =
     flags.title || path.basename(filePath, path.extname(filePath)) || "untitled";
   const body = { html, title };
   if (toEmails.length) body.to = toEmails;
-  const res = await fetch(`${apiBase}/api/panels`, {
+  const res = await apiFetch(`${apiBase}/api/panels`, {
     method: "POST",
     headers: {
       accept: "application/json",
@@ -320,13 +410,11 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
   const host = data.host || session.host || "";
   if (!res.ok) {
     if (res.status === 401) clearPublishSession();
-    const where = host ? ` A conta está ligada em ${host}.` : "";
-    throw new Error(`Não consegui publicar agora.${where} Tenta de novo em instantes.`);
+    const code = codeFromApiError(data.error, res.status, { hadSession: true });
+    throw new CliError(code, publishApiMessage(code, host, filePath));
   }
   if (!data.url || !data.id) {
-    throw new Error(
-      `Não consegui publicar agora.${host ? ` A conta está ligada em ${host}.` : ""} Tenta de novo em instantes.`
-    );
+    throw new CliError("server_error", publishRetryMessage(host));
   }
   const lang = flags.lang === "en" ? "en" : "pt";
   const entry = {
@@ -356,23 +444,40 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
 
 async function cmdPublish(fileArg, flags, cfg) {
   if (!fileArg) {
-    throw new Error(
-      `Usage: ${CLI} publish <file.html> [--title "..."] [--to email,email]`
+    throw new CliError(
+      "usage",
+      `Usage: ${npxCmd("publish <file.html> [--title \"...\"] [--to email,email]")}`
     );
   }
   const filePath = path.resolve(fileArg);
-  if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
+  if (!fs.existsSync(filePath)) {
+    throw new CliError("file_not_found", `File not found: ${filePath}`);
+  }
   const html = fs.readFileSync(filePath, "utf8");
-  if (!html.trim()) throw new Error("HTML file is empty");
+  if (!html.trim()) throw new CliError("file_empty", "HTML file is empty");
+  if (!looksLikeHtml(html)) {
+    throw new CliError(
+      "not_html",
+      "File is not HTML. Publish an .html dashboard (tags like <html> or <div>)."
+    );
+  }
 
   const useMock = Boolean(flags.mock || cfg.mock);
   const useOperator = operatorMode(flags);
-  const toEmails = parseToFlag(flags.to);
-  if (flags.to !== undefined && flags.to !== true && toEmails.length === 0) {
-    throw new Error(
-      "Inclua pelo menos um e-mail em --to (ex.: --to ana@empresa.com)"
-    );
+  if (flags.to !== undefined && flags.to !== true) {
+    const tokens = String(flags.to)
+      .split(/[,;\s]+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const invalid = tokens.filter((t) => !isEmailToken(t));
+    if (!tokens.length || invalid.length) {
+      throw new CliError(
+        "invalid_email",
+        "Inclua pelo menos um e-mail em --to (ex.: --to ana@empresa.com)"
+      );
+    }
   }
+  const toEmails = parseToFlag(flags.to);
 
   const access = buildAccessMeta({
     toEmails,
@@ -518,7 +623,7 @@ async function cmdList(flags, cfg) {
 }
 
 async function cmdRevoke(key, cfg, flags) {
-  if (!key) throw new Error(`Usage: ${CLI} revoke <key>`);
+  if (!key) throw new CliError("usage", `Usage: ${npxCmd("revoke <key>")}`);
   const useMock = Boolean(flags.mock || cfg.mock);
 
   process.stderr.write(`Revoking ${key}…\n`);
@@ -549,21 +654,27 @@ async function cmdRevoke(key, cfg, flags) {
 
 async function cmdDoctor(cfg) {
   if (!cfg.mock && !operatorMode({})) {
-    const lines = [`${CLI} doctor`, "─────────────────────"];
+    const lines = [`${npxCmd("doctor")}`, "─────────────────────"];
     const session = readPublishSession();
     if (session) {
       lines.push(`Status: conta ligada${session.email ? " (" + session.email + ")" : ""}.`);
       if (session.host) lines.push(`host: ${session.host}`);
-      lines.push(`Next: ${CLI} publish <file.html>`);
+      lines.push(`Next: ${npxCmd("publish <file.html>")}`);
     } else {
       lines.push("Status: conta não ligada nesta máquina.");
-      lines.push(`Next: ${CLI} login`);
+      lines.push(`Next: ${npxCmd("login")}`);
     }
     console.log(lines.join("\n"));
-    return session ? 0 : 1;
+    if (!session) {
+      throw new CliError(
+        "not_logged_in",
+        "Status: conta não ligada nesta máquina."
+      );
+    }
+    return 0;
   }
   const lines = [];
-  lines.push(`${CLI} doctor`);
+  lines.push(`${npxCmd("doctor")}`);
   lines.push("─────────────────────");
   lines.push(`Node:                 ${process.version}`);
   lines.push(`mock mode:            ${cfg.mock ? "ON" : "off"}`);
@@ -626,7 +737,7 @@ async function cmdDoctor(cfg) {
       const v = await verifyToken(cfg.apiToken);
       lines.push(`Token verify: OK (${v.result?.status || "active"})`);
       lines.push("");
-      lines.push(`Next: ${CLI} publish examples/panel-vendas.html --title \"…\"`);
+      lines.push(`Next: ${npxCmd("publish examples/panel-vendas.html --title \"…\"")}`);
       if (!cfg.baseUrl) {
         lines.push("  Tip: set SECURE_PUBLISH_BASE_URL=https://demo.securepublish.work");
       }
@@ -645,7 +756,13 @@ async function cmdDoctor(cfg) {
   lines.push("  Wildcard *.securepublish.work: LIVE — docs/DEPLOY-WILDCARD.md");
 
   console.log(lines.join("\n"));
-  return cfg.mock || missing.length === 0 ? 0 : 1;
+  if (!cfg.mock && missing.length) {
+    throw new CliError(
+      "missing_config",
+      `Status: incomplete — missing ${missing.join(", ")}`
+    );
+  }
+  return 0;
 }
 
 /**
@@ -750,13 +867,14 @@ async function cmdMockServe(flags, cfg) {
     server.listen(port, "127.0.0.1", (err) => (err ? reject(err) : resolve()));
   });
   console.log(
-    `${CLI} mock-serve on http://127.0.0.1:${port} (domains: ${companyDomains.join(", ")})`
+    `${npxCmd("mock-serve")} on http://127.0.0.1:${port} (domains: ${companyDomains.join(", ")})`
   );
   console.log("Header X-Mock-User simulates SSO session. Ctrl+C to stop.");
   return server;
 }
 
 export async function main(argv) {
+  assertNpmEngine();
   const args = parseArgs(argv);
   const cmd = args._[0];
 
@@ -784,6 +902,7 @@ export async function main(argv) {
     case "revoke":
       await cmdRevoke(args._[1], cfg, args.flags);
       break;
+    case "status":
     case "doctor": {
       const code = await cmdDoctor(cfg);
       if (code) process.exitCode = code;
@@ -795,6 +914,6 @@ export async function main(argv) {
       await new Promise(() => {});
       break;
     default:
-      throw new Error(`Unknown command: ${cmd}\n\n${HELP}`);
+      throw new CliError("unknown_command", `Unknown command: ${cmd}\n\n${HELP}`);
   }
 }

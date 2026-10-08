@@ -90,6 +90,8 @@ Metadata `mode` pode ser `company` ou `org`. Os dois significam **domínio**, n�
 
 ## CLI
 
+Requires **Node 20+** and **npm 10+**. Debian/Ubuntu Node 20 often ships npm 9.2.0; `npx --yes github:clovistx/secure-publish …` then exits 1 with **no output**. npm 9 treats this repo’s `workspaces` as a git-dep prepare, shells out `install --force`, hits the Unix `install` binary (`install: unrecognized option '--force'`), and npx swallows the error before our CLI starts. Upgrade: `npm i -g npm@10`. If the CLI does start under npm 9 (rare), it prints `error: npm_engine` and the same upgrade line.
+
 Package bin name: **`securepublish-cli`** (what `npx github:…` invokes). Do **not** `npm install secure-publish` or `npx secure-publish` (unrelated public package). There is no durable global install — every runnable invocation uses the full form (npx does not leave `securepublish-cli` on PATH):
 
 ```bash
@@ -103,6 +105,28 @@ npx --yes github:clovistx/secure-publish list
 npx --yes github:clovistx/secure-publish revoke <key>
 npx --yes github:clovistx/secure-publish doctor
 ```
+
+Failures print `error: <code>` on stderr (then a human line) and exit non-zero. Unknown Worker JSON `error` values are printed verbatim. Codes:
+
+| code | meaning |
+|------|---------|
+| `file_not_found` | Publish path does not exist |
+| `file_empty` | HTML file is empty (also Worker `missing_html`) |
+| `not_html` | File has no HTML markup |
+| `invalid_email` | `--to` missing or not a valid email (also Worker `min_email`) |
+| `not_logged_in` | No local publish session (`login` / `doctor` / `status`) |
+| `session_expired` | Worker `401 unauthorized` after a stored token |
+| `network_error` | API fetch failed (connection/timeout) |
+| `server_error` | HTTP failure with no JSON `error` code |
+| `no_host` | Worker `409 no_host` — account has no publish host |
+| `html_too_large` | Worker `413 html_too_large` |
+| `company_requires_work_domain` | Worker `400` — personal/public email cannot company-publish; pass `--to` |
+| `reserved_slug` | Worker `400 reserved_slug` on hosting subdomain claim (passthrough; CLI has no hosting-claim command yet) |
+| `expired_token` | Login device code expired (Worker poll `expired_token`) |
+| `npm_engine` | Detected npm &lt; 10 |
+| `usage` | Missing required args (`publish` file, `revoke` key) |
+| `unknown_command` | Not a CLI subcommand |
+| `missing_config` | Operator mode missing Cloudflare config |
 
 Mensagens (PT):
 

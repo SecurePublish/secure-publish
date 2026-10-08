@@ -7,7 +7,7 @@ Auth: session cookie from OAuth (same-site / CORS credentials).
 | Method | Path | Notes |
 |--------|------|--------|
 | GET | `/api/me` | `{ email, idp, domain, host, customHostname, customVerified }` — `host` is the serving host only (verified custom or subdomain), never `""`. When a custom hostname is claimed but not verified (`customHostname` set and `customVerified` false), also includes `verify: { type:"txt", name, value }` with the opaque TXT challenge so Hosting can re-show Name/Value without re-claiming. |
-| POST | `/api/panels` | SSO cookie **or** `Authorization: Bearer` publish credential (not a browser cookie). Body `{ html, title?, to? }`. Default access = company (session email domain). `201 { ok, id, url, host, mode, allowlist, title, publishedAt }` with `url` = `https://{host}/{id}`. `409 no_host` if the account has no host. `413 html_too_large` over 1.5MB. `401` with no session. Publisher is always the signed-in account. |
+| POST | `/api/panels` | SSO cookie **or** `Authorization: Bearer` publish credential (not a browser cookie). Body `{ html, title?, to? }`. Default access = company (session email domain). `201 { ok, id, url, host, mode, allowlist, title, publishedAt }` with `url` = `https://{host}/{id}`. `409 no_host` if the account has no host. `413 html_too_large` over 1.5MB. `401 unauthorized` with no session. `400 company_requires_work_domain` when a personal/public email domain publishes without `to`. `400 min_email` / `missing_html` as noted. Publisher is always the signed-in account. |
 | POST | `/api/device/code` | No session. Starts a one-time login. `{ device_code, verification_url, expires_in, interval }` |
 | POST | `/api/device/token` | No session. Poll with `{ device_code }`. Pending: `authorization_pending`. Once: `{ access_token, token_type: Bearer, email, host, expires_in }` (12h, publish-only). Replay: `expired_token`. |
 | POST | `/api/device/bind` | SSO only. Account owner links the one-time code. Single-use. |
@@ -23,3 +23,20 @@ Auth: session cookie from OAuth (same-site / CORS credentials).
 | GET\|POST | `/auth/logout` | Clear `secure_publish_session` (same Path/SameSite/Secure/Domain as login) → 302 first `CONSOLE_ORIGIN` + `/signup/` (ignores `?next=`; `Cache-Control: no-store`) |
 
 Lock A: `mode=company` = same email domain after SSO. Not Workspace/Entra/GitHub Org membership.
+
+### CLI stderr codes (from this API)
+
+`npx --yes github:clovistx/secure-publish` prints `error: <code>` on stderr and exits non-zero. Worker JSON `{ "error": "<code>" }` is printed verbatim unless remapped:
+
+| Worker `error` | CLI `error:` |
+|----------------|--------------|
+| `unauthorized` | `session_expired` (token was sent) or `not_logged_in` |
+| `min_email` | `invalid_email` |
+| `missing_html` | `file_empty` |
+| `no_host` | `no_host` |
+| `html_too_large` | `html_too_large` |
+| `company_requires_work_domain` | `company_requires_work_domain` |
+| `reserved_slug` | `reserved_slug` (passthrough; CLI does not claim hosting slugs yet) |
+| `expired_token` | `expired_token` |
+| any other `^[a-z][a-z0-9_]+$` | printed verbatim (not collapsed to `server_error`) |
+| no JSON `error` / fetch throw | `server_error` / `network_error` |
