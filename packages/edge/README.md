@@ -1,6 +1,6 @@
 # `@secure-publish/edge`
 
-Cloudflare Worker: panel HTML (`GET /:id`) + **console API** matching Cameron’s contract.
+Cloudflare Worker: panel HTML (`GET /:id`) + **console API** matching Cameron’s contract. `/api/*` is served only on the app host.
 
 Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)  
 (in-repo copy / pointer: see root README). Console client: `secure-publish-app/api.js`.
@@ -10,7 +10,7 @@ Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)
 | Method | Path | Notes |
 |--------|------|--------|
 | GET | `/api/me` | `{ email, idp, domain, host, customHostname, customVerified }` (+ `verify` when pending) — SSO required |
-| GET | `/api/panels?scope=mine\|company` | `{ host, panels: [{ id, title, … }] }` — SSO; `title` fallback `"untitled"`; `viewers[]` only after auth |
+| GET | `/api/panels?scope=mine\|company` | `{ host, panels: [{ id, title, … }] }` — SSO; `title` fallback `"untitled"`; `views` for every listed panel; **`viewers[]` publisher-only** (omitted unless session email === `publisherEmail`) |
 | PATCH | `/api/panels/:id/access` | `{ mode, allowlist[], sendInvite? }` — **publisher only** |
 | PUT | `/api/hosting/subdomain` | `{ slug }` → `{ host }`. `400 reserved_slug` for product/infra names |
 | PUT | `/api/hosting/custom` | `{ hostname }` → claim; TXT `sp-verify=<opaque-token>`; **not served until verified** |
@@ -25,9 +25,11 @@ Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)
 
 1. Every `/api/*` requires SSO session (401 without cookie / Access JWT).
 2. `PATCH …/access` = publisher only (403 otherwise).
-3. CORS = exact `CONSOLE_ORIGIN` (comma-separated) + `credentials`.
-4. `viewers[]` is PII — only returned on authenticated `/api/panels`.
+3. CORS = exact `CONSOLE_ORIGIN` (comma-separated, `new URL().origin`) + `credentials`.
+4. `viewers[]` is PII — publisher-only (session email equals `publisherEmail`). Colleagues still get `views` + `path`.
 5. Custom domain: reserved via API; Host gate blocks serving until `customVerified`.
+6. `/api/*` only when `Host` is the app host (`APP_HOST` or `OAUTH_CALLBACK_ORIGIN`). Other hosts: same 404 as an unknown path.
+7. Cookie mutations (`POST`/`PATCH`/`PUT`/`DELETE`): exact console `Origin` + `Content-Type: application/json`. Else `403 csrf_origin` / `csrf_content_type`. Bearer and `/api/device/code|token` exempt; `/api/device/bind` is not.
 
 Lock A: `mode=company` = email **domain** after SSO (not Workspace/Entra/GitHub Org).
 

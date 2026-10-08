@@ -5,11 +5,13 @@
  * 1) Every /api/* requires SSO session
  * 2) PATCH access = publisher only
  * 3) CORS = exact CONSOLE_ORIGIN + credentials
- * 4) viewers[] PII only for authenticated tenant users
+ * 4) viewers[] PII only for the panel publisher (email === publisherEmail)
  * 5) Custom domain: claim + verify ownership before serving as host
+ * 6) /api/* only on the app host (OAUTH_CALLBACK_ORIGIN / APP_HOST)
+ * 7) Cookie mutations: exact console Origin + application/json
  */
 
-import { requireSsoSession, ssoMode } from "./sso.js";
+import { requireSsoSession, ssoMode, oauthCallbackOrigin, consoleOrigins } from "./sso.js";
 import { isPublicEmailDomain, normalizeDomains } from "./acl.js";
 import {
   getPanel,
@@ -31,6 +33,11 @@ import {
   buildAccessFromPatch,
   indexPanel,
   PANEL_ID_RE,
+  lookupPanelId,
+  allocatePanelCode,
+  normalizePanelName,
+  panelPath,
+  storedPanelName,
   createDeviceCode,
   approveDeviceCode,
   pollDeviceCode,
@@ -38,13 +45,84 @@ import {
   revokePublishToken,
 } from "./kv.js";
 
-/** @returns {string[]} */
-export function consoleOrigins(env) {
-  const raw = env.CONSOLE_ORIGIN || env.CONSOLE_ORIGINS || "";
-  return String(raw)
-    .split(",")
-    .map((s) => s.trim().replace(/\/$/, ""))
-    .filter(Boolean);
+export { consoleOrigins };
+
+/**
+ * Hostname that may serve `/api/*`. APP_HOST if set, else the existing
+ * OAuth callback origin — no second hardcoded app host here.
+ */
+export function apiHost(env = {}) {
+  const raw = String(env.APP_HOST || "").trim();
+  if (raw) {
+    try {
+      return new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase();
+    } catch {
+      return raw.split("/")[0].split(":")[0].toLowerCase();
+    }
+  }
+  return new URL(oauthCallbackOrigin(env)).hostname.toLowerCase();
+}
+
+function requestHostname(request) {
+  const header = (request.headers.get("Host") || "").split(":")[0].toLowerCase();
+  if (header) return header;
+  try {
+    return new URL(request.url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function jsonMediaType(request) {
+  const raw = request.headers.get("content-type") || "";
+  return raw.split(";")[0].trim().toLowerCase() === "application/json";
+}
+
+const UNKNOWN_PATH_404 = "Not found — invalid or unknown panel id.";
+
+function unknownPath404() {
+  return new Response(UNKNOWN_PATH_404, {
+    status: 404,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "referrer-policy": "no-referrer",
+      "x-robots-tag": "noindex, nofollow",
+    },
+  });
+}
+
+/**
+ * Cookie-authenticated POST/PATCH/PUT/DELETE under /api/*.
+ * Bearer and unauthenticated device/code + device/token are exempt.
+ * device/bind is not.
+ */
+function cookieCsrfError(request, env, url) {
+  const method = request.method.toUpperCase();
+  if (!["POST", "PATCH", "PUT", "DELETE"].includes(method)) return null;
+  const auth = request.headers.get("authorization") || "";
+  if (/^Bearer\s+\S+/i.test(auth)) return null;
+  if (
+    method === "POST" &&
+    (url.pathname === "/api/device/code" || url.pathname === "/api/device/token")
+  ) {
+    return null;
+  }
+  if (!(request.headers.get("Cookie") || request.headers.get("cookie"))) return null;
+
+  const originHeader = request.headers.get("Origin") || "";
+  let origin = "";
+  try {
+    origin = new URL(originHeader).origin;
+  } catch {
+    origin = "";
+  }
+  if (!origin || !consoleOrigins(env).includes(origin)) {
+    return err("csrf_origin", 403, request, env);
+  }
+  if (!jsonMediaType(request)) {
+    return err("csrf_content_type", 403, request, env);
+  }
+  return null;
 }
 
 export function corsHeaders(request, env) {
@@ -57,8 +135,14 @@ export function corsHeaders(request, env) {
     "Access-Control-Allow-Credentials": "true",
     "Access-Control-Max-Age": "86400",
   };
-  if (origin && allowed.includes(origin)) {
-    headers["Access-Control-Allow-Origin"] = origin;
+  let requestOrigin = "";
+  try {
+    requestOrigin = origin ? new URL(origin).origin : "";
+  } catch {
+    requestOrigin = "";
+  }
+  if (requestOrigin && allowed.includes(requestOrigin)) {
+    headers["Access-Control-Allow-Origin"] = requestOrigin;
   }
   return headers;
 }
@@ -79,22 +163,48 @@ function err(message, status, request, env) {
   return json({ error: message }, status, request, env);
 }
 
+/** viewers[] is publisher-only. Missing/blank publisherEmail never qualifies. */
+export function isPanelPublisher(requesterEmail, publisherEmail) {
+  const a = String(requesterEmail || "").trim().toLowerCase();
+  const b = String(publisherEmail || "").trim().toLowerCase();
+  return Boolean(a && b && a === b);
+}
+
+/** Always `views`; `viewers` only when requester owns the panel. */
+function viewFields(viewData, requesterEmail, publisherEmail) {
+  const { views, viewers } = viewsToApi(viewData);
+  const out = { views };
+  if (isPanelPublisher(requesterEmail, publisherEmail)) out.viewers = viewers;
+  return out;
+}
+
 /**
  * @returns {Promise<Response | null>} null if not an /api route
  */
 export async function handleApiRoutes(request, env) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/")) return null;
+  // Any other Host (panel slug, apex, workers.dev) is an unknown path.
+  if (requestHostname(request) !== apiHost(env)) return unknownPath404();
 
   // Preflight — no session required, but origin must match allowlist.
   if (request.method === "OPTIONS") {
-    const origin = request.headers.get("Origin") || "";
+    const originHeader = request.headers.get("Origin") || "";
     const allowed = consoleOrigins(env);
-    if (origin && !allowed.includes(origin)) {
+    let origin = "";
+    try {
+      origin = originHeader ? new URL(originHeader).origin : "";
+    } catch {
+      origin = "";
+    }
+    if (originHeader && !allowed.includes(origin)) {
       return new Response(null, { status: 403 });
     }
     return new Response(null, { status: 204, headers: corsHeaders(request, env) });
   }
+
+  const csrf = cookieCsrfError(request, env, url);
+  if (csrf) return csrf;
 
   // Device login start/poll and publish-credential revoke do not use the
   // browser cookie. Panel routes still require the account owner.
@@ -109,8 +219,10 @@ export async function handleApiRoutes(request, env) {
   }
 
   const publishPost = url.pathname === "/api/panels" && request.method === "POST";
+  const namePatch =
+    /^\/api\/panels\/[^/]+\/name\/?$/.test(url.pathname) && request.method === "PATCH";
   let bearerEmail = null;
-  if (publishPost) {
+  if (publishPost || namePatch) {
     const header = request.headers.get("authorization") || "";
     const match = header.match(/^Bearer\s+(\S+)/i);
     if (match) {
@@ -123,7 +235,7 @@ export async function handleApiRoutes(request, env) {
   // (1) Every other /api/* requires SSO — no anonymous data.
   // POST /api/panels also accepts the publish credential in Authorization.
   const sso = await requireSsoSession(request, env, { api: true });
-  if (!sso.ok && !(publishPost && bearerEmail)) {
+  if (!sso.ok && !((publishPost || namePatch) && bearerEmail)) {
     return err(sso.body || "unauthorized", sso.status || 401, request, env);
   }
   const user = sso.ok ? sso.user : { email: bearerEmail, provider: "device" };
@@ -156,6 +268,11 @@ export async function handleApiRoutes(request, env) {
   const accessMatch = url.pathname.match(/^\/api\/panels\/([^/]+)\/access\/?$/);
   if (accessMatch && request.method === "PATCH") {
     return handlePatchAccess(request, env, accessMatch[1], { email, domain });
+  }
+
+  const nameMatch = url.pathname.match(/^\/api\/panels\/([^/]+)\/name\/?$/);
+  if (nameMatch && request.method === "PATCH") {
+    return handlePatchName(request, env, nameMatch[1], { email });
   }
 
   if (url.pathname === "/api/hosting/subdomain" && request.method === "PUT") {
@@ -277,31 +394,80 @@ async function handleListPanels(request, env, url, { email, domain }) {
       }
     }
 
-    // (4) viewers PII only for authenticated tenant (we already require SSO).
-    // Same-domain publishers / company viewers may see analytics for panels they can list.
     const viewData = await getViews(kv, id);
-    const { views, viewers } = viewsToApi(viewData);
+    const stats = viewFields(viewData, email, publisherEmail);
 
     const title =
       typeof record.title === "string" && record.title.trim()
         ? record.title.trim()
         : "untitled";
 
+    const name = storedPanelName(record);
+    const path = panelPath(id, name);
     panels.push({
       id,
       title,
+      name,
+      path,
+      url: host ? `https://${host}${path}` : null,
       publisherEmail: publisherEmail || null,
       mode,
       allowlist: accessToAllowlist(record.access),
       publishedAt: record.publishedAt || null,
       publishedLabel: formatPublishedLabel(record.publishedAt),
-      views,
-      viewers,
+      ...stats,
     });
   }
 
   panels.sort((a, b) => String(b.publishedAt || "").localeCompare(String(a.publishedAt || "")));
   return json({ host, panels }, 200, request, env);
+}
+
+async function handlePatchName(request, env, panelId, { email }) {
+  if (!lookupPanelId(panelId)) {
+    return err("not_found", 404, request, env);
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return err("invalid_json", 400, request, env);
+  }
+  if (!body || typeof body !== "object" || !("name" in body)) {
+    return err("invalid_json", 400, request, env);
+  }
+
+  const kv = env.PANELS;
+  const id = lookupPanelId(panelId);
+  const record = await getPanel(kv, id);
+  if (!record) return err("not_found", 404, request, env);
+
+  const publisher = (record.publisherEmail || "").trim().toLowerCase();
+  if (!publisher || publisher !== email) {
+    return err("forbidden", 403, request, env);
+  }
+
+  const normalized = normalizePanelName(body.name);
+  if (normalized) record.name = normalized;
+  else delete record.name;
+  await putPanel(kv, id, record);
+
+  const host = await resolveHost(kv, email, env);
+  const name = storedPanelName(record);
+  const path = panelPath(id, name);
+  const viewData = await getViews(kv, id);
+  return json(
+    {
+      id,
+      name,
+      path,
+      url: host ? `https://${host}${path}` : null,
+      ...viewFields(viewData, email, publisher),
+    },
+    200,
+    request,
+    env
+  );
 }
 
 async function handlePatchAccess(request, env, panelId, { email }) {
@@ -357,7 +523,6 @@ async function handlePatchAccess(request, env, panelId, { email }) {
   }
 
   const viewData = await getViews(kv, panelId);
-  const { views, viewers } = viewsToApi(viewData);
   const panel = {
     id: panelId,
     publisherEmail: publisher,
@@ -365,8 +530,7 @@ async function handlePatchAccess(request, env, panelId, { email }) {
     allowlist: accessToAllowlist(access),
     publishedAt: record.publishedAt || null,
     publishedLabel: formatPublishedLabel(record.publishedAt),
-    views,
-    viewers,
+    ...viewFields(viewData, email, publisher),
   };
 
   return json({ ok: true, panel, inviteStub }, 200, request, env);
@@ -439,11 +603,6 @@ async function handleRevokePublish(request, env) {
 /** Customer publish cap. Operator KV path is not this route. */
 const MAX_HTML_BYTES = Math.floor(1.5 * 1024 * 1024);
 
-function newPanelId() {
-  const bytes = new Uint8Array(12);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 function utf8ByteLength(value) {
   return new TextEncoder().encode(value).length;
@@ -451,7 +610,7 @@ function utf8ByteLength(value) {
 
 /**
  * POST /api/panels — signed-in user publishes HTML. No Cloudflare API token.
- * Body: { html, title?, to?: string | string[] }
+ * Body: { html, title?, name?, to?: string | string[] }
  * Default access = company (session email domain).
  */
 async function handlePublishPanel(request, env, { email, domain }) {
@@ -507,7 +666,10 @@ async function handlePublishPanel(request, env, { email, domain }) {
     title = body.title.trim().replace(/\s+/g, " ").slice(0, 200);
   }
 
-  const id = newPanelId();
+  const id = await allocatePanelCode(env.PANELS);
+  if (!id) return err("id_collision", 500, request, env);
+
+  const name = normalizePanelName(body.name);
   const publishedAt = new Date().toISOString();
   const record = {
     v: 1,
@@ -517,20 +679,26 @@ async function handlePublishPanel(request, env, { email, domain }) {
     access,
     html,
   };
+  if (name) record.name = name;
   await putPanel(env.PANELS, id, record);
   await indexPanel(env.PANELS, id, email, access);
 
-  const url = `https://${host}/${id}`;
+  const path = panelPath(id, name);
+  const url = `https://${host}${path}`;
+  const stats = viewFields({ count: 0, byEmail: {} }, email, email);
   return json(
     {
       ok: true,
       id,
       url,
+      path,
+      name,
       host,
       mode: accessToApiMode(access),
       allowlist: accessToAllowlist(access),
       title,
       publishedAt,
+      ...stats,
     },
     201,
     request,

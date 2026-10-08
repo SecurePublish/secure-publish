@@ -52,9 +52,19 @@ Use the host the command printed. If there is no host yet, ask where to publish.
 Then publish:
 
 ```bash
-npx --yes github:clovistx/secure-publish publish ./dashboard.html --title "Painel"
-npx --yes github:clovistx/secure-publish publish ./dashboard.html --to clovis@wises.com.br,ana@wises.com.br
+npx --yes github:clovistx/secure-publish publish ./dashboard.html --title "Painel" --name "performance-out-26"
+npx --yes github:clovistx/secure-publish publish ./dashboard.html --to clovis@wises.com.br,ana@wises.com.br --name "performance-out-26"
+npx --yes github:clovistx/secure-publish rename <id-or-url> --name "performance-out-26"
+npx --yes github:clovistx/secure-publish rename <id-or-url> --no-name
 ```
+
+**Nome do link**
+- Monte o nome a partir do título do painel, com 3 a 5 palavras e sem artigos nem preposições (o, a, de, do, da, para…). Se o título tiver período, use o mês abreviado e o ano com 2 dígitos. Exemplo: "Performance de Outubro 2026" vira `performance-out-26`. Passe o nome com `--name`.
+- Publique **sem** `--name` quando o título tiver nome de pessoa, e-mail, valor em dinheiro, número de documento ou assunto sensível (demissões, salários, saúde, jurídico, aquisição). Na dúvida, sem nome.
+- **Resposta normal:** "Publiquei: {link}. Quer outro nome?" / "Published: {link}. Want a different name?"
+- **Quando sai sem nome por ser sensível:** "Publiquei: {link}. Deixei sem nome no link porque o título tem informação sensível. Quer pôr um nome?" / "Published: {link}. I left the name out of the link because the title has sensitive info. Want to add one?"
+- **Depois do `rename`:** "Pronto, o link agora é {link}. O anterior continua funcionando." / "Done, the link is now {link}. The old one still works."
+- **Depois do `rename` com nome vazio:** "Pronto, o link agora é {link}, sem nome." / "Done, the link is now {link}, with no name."
 
 Company-wide means the same email domain as the signed-in account. If they did not say who can see it, ask once:
 

@@ -33,7 +33,9 @@ Auth model:
 
 Usage:
   ${CLI} login
-  ${CLI} publish <file.html> [--title "..."] [--to email,email] [--mock]
+  ${CLI} publish <file.html> [--title "..."] [--name "..."] [--to email,email] [--mock]
+  ${CLI} rename <id-or-url> --name <text>
+  ${CLI} rename <id-or-url> --no-name
   ${CLI} logout
   ${CLI} list [--remote]
   ${CLI} revoke <key>
@@ -68,6 +70,10 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === "--title" || a === "-t") {
       args.flags.title = argv[++i] ?? "";
+    } else if (a === "--name") {
+      args.flags.name = argv[++i] ?? "";
+    } else if (a === "--no-name") {
+      args.flags.noName = true;
     } else if (a === "--to") {
       args.flags.to = argv[++i] ?? "";
     } else if (a === "--remote") {
@@ -170,7 +176,9 @@ function decodeRecord(raw) {
 }
 
 
-const SESSION_FILE = path.join(os.homedir(), ".secure-publish", "session.json");
+function sessionFile() {
+  return path.join(os.homedir(), ".secure-publish", "session.json");
+}
 
 function apiBaseOf(cfg) {
   return String(
@@ -189,7 +197,7 @@ function operatorMode(flags) {
 /** Local publish credential. Mode 0600. Never log the secret. */
 function readPublishSession() {
   try {
-    const raw = JSON.parse(fs.readFileSync(SESSION_FILE, "utf8"));
+    const raw = JSON.parse(fs.readFileSync(sessionFile(), "utf8"));
     const publishToken = String(raw?.publishToken || "").trim();
     if (!/^[a-f0-9]{64}$/.test(publishToken)) return null;
     if (raw.expiresAt && Date.parse(raw.expiresAt) <= Date.now()) return null;
@@ -206,18 +214,19 @@ function readPublishSession() {
 }
 
 function writePublishSession(session) {
-  const dir = path.dirname(SESSION_FILE);
+  const file = sessionFile();
+  const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const tmp = `${SESSION_FILE}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(session, null, 2) + "\n", { mode: 0o600 });
   fs.chmodSync(tmp, 0o600);
-  fs.renameSync(tmp, SESSION_FILE);
-  fs.chmodSync(SESSION_FILE, 0o600);
+  fs.renameSync(tmp, file);
+  fs.chmodSync(file, 0o600);
 }
 
 function clearPublishSession() {
   try {
-    fs.unlinkSync(SESSION_FILE);
+    fs.unlinkSync(sessionFile());
   } catch {
     /* absent */
   }
@@ -307,6 +316,7 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
     flags.title || path.basename(filePath, path.extname(filePath)) || "untitled";
   const body = { html, title };
   if (toEmails.length) body.to = toEmails;
+  if (typeof flags.name === "string" && flags.name !== "") body.name = flags.name;
   const res = await fetch(`${apiBase}/api/panels`, {
     method: "POST",
     headers: {
@@ -357,7 +367,7 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
 async function cmdPublish(fileArg, flags, cfg) {
   if (!fileArg) {
     throw new Error(
-      `Usage: ${CLI} publish <file.html> [--title "..."] [--to email,email]`
+      `Usage: ${CLI} publish <file.html> [--title "..."] [--name "..."] [--to email,email]`
     );
   }
   const filePath = path.resolve(fileArg);
@@ -515,6 +525,63 @@ async function cmdList(flags, cfg) {
     if (!keys.length) console.log("  (empty)");
     else for (const k of keys) console.log(`  ${k}`);
   }
+}
+
+/** First path segment of a panel URL or a bare id. */
+export function parsePanelRef(ref) {
+  const raw = String(ref || "").trim();
+  if (!raw) return "";
+  try {
+    if (/^https?:\/\//i.test(raw)) {
+      const u = new URL(raw);
+      const parts = u.pathname.split("/").filter(Boolean);
+      return parts[0] || "";
+    }
+  } catch {
+    /* fall through */
+  }
+  const parts = raw.replace(/^\//, "").split("/").filter(Boolean);
+  return parts[0] || "";
+}
+
+async function cmdRename(ref, flags, cfg) {
+  const usage = `Usage: ${CLI} rename <id-or-url> --name <text>`;
+  if (!ref) throw new Error(usage);
+  const clear = flags.noName === true || flags.name === "";
+  if (!clear && typeof flags.name !== "string") throw new Error(usage);
+
+  const session = readPublishSession();
+  if (!session) {
+    throw new Error(`Conta não ligada nesta máquina. Rode ${CLI} login.`);
+  }
+
+  const id = parsePanelRef(ref);
+  if (!id) throw new Error(usage);
+
+  const apiBase = (session.apiBase || apiBaseOf(cfg)).replace(/\/$/, "");
+  const res = await fetch(`${apiBase}/api/panels/${encodeURIComponent(id)}/name`, {
+    method: "PATCH",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      authorization: `Bearer ${session.publishToken}`,
+    },
+    body: JSON.stringify({ name: clear ? null : flags.name }),
+  });
+  const data = await res.json().catch(() => ({}));
+  const host = data.host || session.host || "";
+  if (!res.ok) {
+    if (res.status === 401) clearPublishSession();
+    const where = host ? ` A conta está ligada em ${host}.` : "";
+    throw new Error(`Não consegui alterar o nome agora.${where} Tenta de novo em instantes.`);
+  }
+  if (!data.url) {
+    throw new Error(
+      `Não consegui alterar o nome agora.${host ? ` A conta está ligada em ${host}.` : ""} Tenta de novo em instantes.`
+    );
+  }
+  console.log(data.url);
+  return data;
 }
 
 async function cmdRevoke(key, cfg, flags) {
@@ -777,6 +844,9 @@ export async function main(argv) {
       break;
     case "publish":
       await cmdPublish(args._[1], args.flags, cfg);
+      break;
+    case "rename":
+      await cmdRename(args._[1], args.flags, cfg);
       break;
     case "list":
       await cmdList(args.flags, cfg);

@@ -39,7 +39,7 @@ const bypassEnv = (panels) => ({
 async function issuePublishToken(panels) {
   const env = bypassEnv(panels);
   const started = await worker.fetch(
-    new Request("https://worker.test/api/device/code", { method: "POST" }),
+    new Request("https://app.securepublish.work/api/device/code", { method: "POST" }),
     env
   );
   assert.equal(started.status, 200);
@@ -48,7 +48,7 @@ async function issuePublishToken(panels) {
   assert.match(start.verification_url, /\/auth\/google\?device=[a-f0-9]{64}$/);
 
   const pending = await worker.fetch(
-    new Request("https://worker.test/api/device/token", {
+    new Request("https://app.securepublish.work/api/device/token", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ device_code: start.device_code }),
@@ -59,7 +59,7 @@ async function issuePublishToken(panels) {
   assert.equal((await pending.json()).error, "authorization_pending");
 
   const bound = await worker.fetch(
-    new Request("https://worker.test/api/device/bind", {
+    new Request("https://app.securepublish.work/api/device/bind", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ device_code: start.device_code }),
@@ -69,7 +69,7 @@ async function issuePublishToken(panels) {
   assert.equal(bound.status, 200);
 
   const again = await worker.fetch(
-    new Request("https://worker.test/api/device/bind", {
+    new Request("https://app.securepublish.work/api/device/bind", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ device_code: start.device_code }),
@@ -79,7 +79,7 @@ async function issuePublishToken(panels) {
   assert.equal(again.status, 400);
 
   const polled = await worker.fetch(
-    new Request("https://worker.test/api/device/token", {
+    new Request("https://app.securepublish.work/api/device/token", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ device_code: start.device_code }),
@@ -95,7 +95,7 @@ async function issuePublishToken(panels) {
   assert.ok(body.expires_in > 0 && body.expires_in <= 60 * 60 * 12);
 
   const replay = await worker.fetch(
-    new Request("https://worker.test/api/device/token", {
+    new Request("https://app.securepublish.work/api/device/token", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ device_code: start.device_code }),
@@ -114,7 +114,7 @@ describe("POST /api/panels", () => {
       CONSOLE_ORIGIN: "https://console.pages.dev",
     };
     const res = await worker.fetch(
-      new Request("https://worker.test/api/panels", {
+      new Request("https://app.securepublish.work/api/panels", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ html: "<p>x</p>" }),
@@ -127,7 +127,7 @@ describe("POST /api/panels", () => {
   it("no host → 409 no_host (does not invent a url)", async () => {
     const env = bypassEnv(memoryKv());
     const res = await worker.fetch(
-      new Request("https://worker.test/api/panels", {
+      new Request("https://app.securepublish.work/api/panels", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ html: "<p>hi</p>", title: "Painel" }),
@@ -144,7 +144,7 @@ describe("POST /api/panels", () => {
     const panels = memoryKv();
     const env = bypassEnv(panels);
     const claim = await worker.fetch(
-      new Request("https://worker.test/api/hosting/subdomain", {
+      new Request("https://app.securepublish.work/api/hosting/subdomain", {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ slug: "wise" }),
@@ -154,7 +154,7 @@ describe("POST /api/panels", () => {
     assert.equal(claim.status, 200);
 
     const res = await worker.fetch(
-      new Request("https://worker.test/api/panels", {
+      new Request("https://app.securepublish.work/api/panels", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -167,7 +167,9 @@ describe("POST /api/panels", () => {
     );
     assert.equal(res.status, 201);
     const body = await res.json();
-    assert.match(body.id, /^[0-9a-f]{24}$/);
+    assert.match(body.id, /^[abcdefghijklmnopqrstuvwxyz234567]{10}$/);
+    assert.equal(body.path, `/${body.id}`);
+    assert.equal(body.name, null);
     assert.equal(body.url, `https://wise.securepublish.work/${body.id}`);
     assert.equal(body.host, "wise.securepublish.work");
     assert.equal(body.mode, "company");
@@ -190,7 +192,7 @@ describe("POST /api/panels", () => {
       "host:sub:wise": "dev@localhost",
     });
     const res = await worker.fetch(
-      new Request("https://worker.test/api/panels", {
+      new Request("https://app.securepublish.work/api/panels", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -216,7 +218,7 @@ describe("POST /api/panels", () => {
     });
     const env = bypassEnv(panels);
     const missing = await worker.fetch(
-      new Request("https://worker.test/api/panels", {
+      new Request("https://app.securepublish.work/api/panels", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ html: "  " }),
@@ -228,7 +230,7 @@ describe("POST /api/panels", () => {
 
     const huge = "x".repeat(Math.floor(1.5 * 1024 * 1024) + 1);
     const over = await worker.fetch(
-      new Request("https://worker.test/api/panels", {
+      new Request("https://app.securepublish.work/api/panels", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ html: huge }),

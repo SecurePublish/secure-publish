@@ -80,7 +80,7 @@ describe("API routes — Marcus checklist", () => {
       // no SSO_DEV_BYPASS, no secrets → mode none
     };
     const res = await worker.fetch(
-      new Request("https://worker.test/api/me", {
+      new Request("https://app.securepublish.work/api/me", {
         headers: { Origin: "https://console.pages.dev" },
       }),
       locked
@@ -90,7 +90,7 @@ describe("API routes — Marcus checklist", () => {
 
   it("(1) /api/me with session (dev-bypass) returns contract shape", async () => {
     const res = await worker.fetch(
-      new Request("https://worker.test/api/me", {
+      new Request("https://app.securepublish.work/api/me", {
         headers: { Origin: "https://console.pages.dev" },
       }),
       env
@@ -113,7 +113,7 @@ describe("API routes — Marcus checklist", () => {
 
   it("GET /api/panels?scope=mine returns panels array shape", async () => {
     const res = await worker.fetch(
-      new Request("https://worker.test/api/panels?scope=mine", {
+      new Request("https://app.securepublish.work/api/panels?scope=mine", {
         headers: { Origin: "https://console.pages.dev" },
       }),
       env
@@ -152,7 +152,7 @@ describe("API routes — Marcus checklist", () => {
       await env.PANELS.put("idx:pub:dev@localhost", JSON.stringify(ids));
     }
     const res = await worker.fetch(
-      new Request("https://worker.test/api/panels?scope=mine", {
+      new Request("https://app.securepublish.work/api/panels?scope=mine", {
         headers: { Origin: "https://console.pages.dev" },
       }),
       env
@@ -165,7 +165,7 @@ describe("API routes — Marcus checklist", () => {
 
   it("(2) PATCH access forbidden for non-publisher", async () => {
     const res = await worker.fetch(
-      new Request(`https://worker.test/api/panels/${PANEL_OTHER}/access`, {
+      new Request(`https://app.securepublish.work/api/panels/${PANEL_OTHER}/access`, {
         method: "PATCH",
         headers: {
           Origin: "https://console.pages.dev",
@@ -180,7 +180,7 @@ describe("API routes — Marcus checklist", () => {
 
   it("(2) PATCH access ok for publisher", async () => {
     const res = await worker.fetch(
-      new Request(`https://worker.test/api/panels/${PANEL_ID}/access`, {
+      new Request(`https://app.securepublish.work/api/panels/${PANEL_ID}/access`, {
         method: "PATCH",
         headers: {
           Origin: "https://console.pages.dev",
@@ -204,7 +204,7 @@ describe("API routes — Marcus checklist", () => {
 
   it("PUT /api/hosting/subdomain returns { host }", async () => {
     const res = await worker.fetch(
-      new Request("https://worker.test/api/hosting/subdomain", {
+      new Request("https://app.securepublish.work/api/hosting/subdomain", {
         method: "PUT",
         headers: {
           Origin: "https://console.pages.dev",
@@ -221,7 +221,7 @@ describe("API routes — Marcus checklist", () => {
 
   it("after subdomain claim, /api/me and /api/panels emit non-empty host", async () => {
     const me = await worker.fetch(
-      new Request("https://worker.test/api/me", {
+      new Request("https://app.securepublish.work/api/me", {
         headers: { Origin: "https://console.pages.dev" },
       }),
       env
@@ -231,7 +231,7 @@ describe("API routes — Marcus checklist", () => {
     assert.notEqual(meBody.host, "");
 
     const panels = await worker.fetch(
-      new Request("https://worker.test/api/panels?scope=mine", {
+      new Request("https://app.securepublish.work/api/panels?scope=mine", {
         headers: { Origin: "https://console.pages.dev" },
       }),
       env
@@ -250,7 +250,7 @@ describe("API routes — Marcus checklist", () => {
       DEFAULT_PANEL_HOST: "   ",
     };
     const res = await worker.fetch(
-      new Request("https://worker.test/api/me", {
+      new Request("https://app.securepublish.work/api/me", {
         headers: { Origin: "https://console.pages.dev" },
       }),
       fresh
@@ -263,7 +263,7 @@ describe("API routes — Marcus checklist", () => {
 
   it("(5) PUT /api/hosting/custom claims but does not verify (opaque TXT token)", async () => {
     const res = await worker.fetch(
-      new Request("https://worker.test/api/hosting/custom", {
+      new Request("https://app.securepublish.work/api/hosting/custom", {
         method: "PUT",
         headers: {
           Origin: "https://console.pages.dev",
@@ -285,7 +285,7 @@ describe("API routes — Marcus checklist", () => {
 
   it("GET /api/me returns pending custom-domain verify object", async () => {
     const res = await worker.fetch(
-      new Request("https://worker.test/api/me", {
+      new Request("https://app.securepublish.work/api/me", {
         headers: { Origin: "https://console.pages.dev" },
       }),
       env
@@ -303,7 +303,7 @@ describe("API routes — Marcus checklist", () => {
 
   it("(3) CORS preflight rejects unknown origin", async () => {
     const res = await worker.fetch(
-      new Request("https://worker.test/api/me", {
+      new Request("https://app.securepublish.work/api/me", {
         method: "OPTIONS",
         headers: { Origin: "https://evil.example" },
       }),
@@ -321,7 +321,7 @@ describe("API routes — Marcus checklist", () => {
       OAUTH_ALLOWED_DOMAINS: "localhost",
     };
     const res = await worker.fetch(
-      new Request("https://worker.test/api/hosting/custom/verify", {
+      new Request("https://app.securepublish.work/api/hosting/custom/verify", {
         method: "POST",
         headers: { Origin: "https://console.pages.dev" },
       }),
@@ -335,7 +335,7 @@ describe("API routes — Marcus checklist", () => {
   it("POST /api/hosting/custom/verify txt_not_found → 422, stays unverified", async () => {
     const me = await (
       await worker.fetch(
-        new Request("https://worker.test/api/me", {
+        new Request("https://app.securepublish.work/api/me", {
           headers: { Origin: "https://console.pages.dev" },
         }),
         env
@@ -343,7 +343,7 @@ describe("API routes — Marcus checklist", () => {
     ).json();
     const expected = me.verify.value;
     const res = await worker.fetch(
-      new Request("https://worker.test/api/hosting/custom/verify", {
+      new Request("https://app.securepublish.work/api/hosting/custom/verify", {
         method: "POST",
         headers: { Origin: "https://console.pages.dev" },
       }),
@@ -362,7 +362,7 @@ describe("API routes — Marcus checklist", () => {
 
   it("POST /api/hosting/custom/verify txt_mismatch → 422", async () => {
     const res = await worker.fetch(
-      new Request("https://worker.test/api/hosting/custom/verify", {
+      new Request("https://app.securepublish.work/api/hosting/custom/verify", {
         method: "POST",
         headers: { Origin: "https://console.pages.dev" },
       }),
@@ -385,7 +385,7 @@ describe("API routes — Marcus checklist", () => {
       CONSOLE_ORIGIN: env.CONSOLE_ORIGIN,
     };
     const res = await worker.fetch(
-      new Request("https://worker.test/api/hosting/custom/verify", {
+      new Request("https://app.securepublish.work/api/hosting/custom/verify", {
         method: "POST",
         headers: { Origin: "https://console.pages.dev" },
       }),
@@ -407,7 +407,7 @@ describe("API routes — Marcus checklist", () => {
   it("POST /api/hosting/custom/verify success → customVerified + host switch + serve OK", async () => {
     const meBefore = await (
       await worker.fetch(
-        new Request("https://worker.test/api/me", {
+        new Request("https://app.securepublish.work/api/me", {
           headers: { Origin: "https://console.pages.dev" },
         }),
         env
@@ -416,7 +416,7 @@ describe("API routes — Marcus checklist", () => {
     const tokenValue = meBefore.verify.value;
 
     const res = await worker.fetch(
-      new Request("https://worker.test/api/hosting/custom/verify", {
+      new Request("https://app.securepublish.work/api/hosting/custom/verify", {
         method: "POST",
         headers: { Origin: "https://console.pages.dev" },
       }),
@@ -436,7 +436,7 @@ describe("API routes — Marcus checklist", () => {
     assert.equal(body.host, "dash.acme.example");
 
     const me = await worker.fetch(
-      new Request("https://worker.test/api/me", {
+      new Request("https://app.securepublish.work/api/me", {
         headers: { Origin: "https://console.pages.dev" },
       }),
       env
@@ -458,7 +458,7 @@ describe("API routes — Marcus checklist", () => {
 
   it("DELETE is listed in CORS Allow-Methods", async () => {
     const res = await worker.fetch(
-      new Request("https://worker.test/api/hosting/custom", {
+      new Request("https://app.securepublish.work/api/hosting/custom", {
         method: "OPTIONS",
         headers: { Origin: "https://console.pages.dev" },
       }),
@@ -474,7 +474,7 @@ describe("API routes — Marcus checklist", () => {
       CONSOLE_ORIGIN: env.CONSOLE_ORIGIN,
     };
     const res = await worker.fetch(
-      new Request("https://worker.test/api/hosting/custom", {
+      new Request("https://app.securepublish.work/api/hosting/custom", {
         method: "DELETE",
         headers: { Origin: "https://console.pages.dev" },
       }),
@@ -514,7 +514,7 @@ describe("DELETE /api/hosting/custom — pending claim rules", () => {
     await env.PANELS.put("host:custom:pending.acme.example", "dev@localhost");
 
     const del = await worker.fetch(
-      new Request("https://worker.test/api/hosting/custom", {
+      new Request("https://app.securepublish.work/api/hosting/custom", {
         method: "DELETE",
         headers: { Origin: "https://console.pages.dev" },
       }),
@@ -526,7 +526,7 @@ describe("DELETE /api/hosting/custom — pending claim rules", () => {
 
     const me = await (
       await worker.fetch(
-        new Request("https://worker.test/api/me", {
+        new Request("https://app.securepublish.work/api/me", {
           headers: { Origin: "https://console.pages.dev" },
         }),
         env
@@ -541,7 +541,7 @@ describe("DELETE /api/hosting/custom — pending claim rules", () => {
   it("404 when none pending", async () => {
     const env = freshEnv();
     const res = await worker.fetch(
-      new Request("https://worker.test/api/hosting/custom", {
+      new Request("https://app.securepublish.work/api/hosting/custom", {
         method: "DELETE",
         headers: { Origin: "https://console.pages.dev" },
       }),
@@ -560,7 +560,7 @@ describe("DELETE /api/hosting/custom — pending claim rules", () => {
     await env.PANELS.put("host:custom:dash.acme.example", "dev@localhost");
 
     const res = await worker.fetch(
-      new Request("https://worker.test/api/hosting/custom", {
+      new Request("https://app.securepublish.work/api/hosting/custom", {
         method: "DELETE",
         headers: { Origin: "https://console.pages.dev" },
       }),
@@ -590,7 +590,7 @@ describe("DELETE /api/hosting/custom — pending claim rules", () => {
     );
 
     const del = await worker.fetch(
-      new Request("https://worker.test/api/hosting/custom", {
+      new Request("https://app.securepublish.work/api/hosting/custom", {
         method: "DELETE",
         headers: { Origin: "https://console.pages.dev" },
       }),
@@ -754,7 +754,7 @@ function hostingEnv(initial = {}) {
 
 function putSubdomain(env, slug) {
   return worker.fetch(
-    new Request("https://worker.test/api/hosting/subdomain", {
+    new Request("https://app.securepublish.work/api/hosting/subdomain", {
       method: "PUT",
       headers: {
         Origin: "https://console.pages.dev",

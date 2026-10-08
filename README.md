@@ -3,7 +3,8 @@
 CLI + skill to publish AI HTML dashboards behind company sign-in.
 
 ```text
-https://{host}/{panel-id}
+https://{host}/{code}
+https://{host}/{code}/{name}   # optional read-only label; not unique
 
 # default host:  {slug}.securepublish.work  (wildcard LIVE; demo interim)
 # fallback:      secure-publish.clovist.workers.dev
@@ -51,7 +52,7 @@ Then: *Publique este dashboard HTML com Secure Publish.*
 ## Arquitetura
 
 ```text
-CLI (`npx --yes github:clovistx/secure-publish publish [--to]`)
+CLI (`npx --yes github:clovistx/secure-publish publish [--name] [--to]`)
         │  Cloudflare REST API (KV PUT)   or --mock local store
         ▼
    KV namespace "PANELS"   panel-id → { html, access }
@@ -94,10 +95,13 @@ Package bin name: **`securepublish-cli`** (what `npx github:…` invokes). Do **
 
 ```bash
 # default: toda a empresa = mesmo domínio de e-mail do tenant
-npx --yes github:clovistx/secure-publish publish examples/panel-vendas.html --title "Painel Vendas Q3"
+npx --yes github:clovistx/secure-publish publish examples/panel-vendas.html --title "Painel Vendas Q3" --name "vendas-q3"
 
 # restringir
-npx --yes github:clovistx/secure-publish publish examples/panel-ops.html --to ana@empresa.com,bia@empresa.com
+npx --yes github:clovistx/secure-publish publish examples/panel-ops.html --to ana@empresa.com,bia@empresa.com --name "ops-ana"
+
+npx --yes github:clovistx/secure-publish rename <id-or-url> --name "vendas-q3"
+npx --yes github:clovistx/secure-publish rename <id-or-url> --no-name
 
 npx --yes github:clovistx/secure-publish list
 npx --yes github:clovistx/secure-publish revoke <key>
@@ -214,10 +218,11 @@ Cameron contract: [`docs/API-CONTRACT.md`](docs/API-CONTRACT.md). Edge implement
 | GET | `/api/me` |
 | GET | `/api/panels?scope=mine\|company` |
 | PATCH | `/api/panels/:id/access` (publisher only) |
+| PATCH | `/api/panels/:id/name` (publisher only) |
 | PUT | `/api/hosting/subdomain` · `/api/hosting/custom` |
 | GET | `/auth/{google\|microsoft\|github}` |
 
-Auth: SSO session cookie / Access JWT. CORS: exact `CONSOLE_ORIGIN` + credentials. Custom domains are claimed but **not served** until ownership is verified.
+Auth: SSO session cookie / Access JWT. `/api/*` only on the app host (`app.securepublish.work`). CORS: exact `CONSOLE_ORIGIN` + credentials. Cookie mutations also require that Origin and `Content-Type: application/json` (`403 csrf_origin` / `csrf_content_type`); Bearer CLI calls are exempt. Custom domains are claimed but **not served** until ownership is verified. `GET /api/panels` `viewers[]` is publisher-only (omitted unless the session email is that panel’s `publisherEmail`); `views` and `path` are still returned.
 
 ```bash
 cd packages/edge && npm test && npx wrangler dev
@@ -227,7 +232,7 @@ cd packages/edge && npm test && npx wrangler dev
 ## Layout
 
 ```text
-packages/cli     securepublish-cli (publish, list, revoke, doctor, mock-serve)
+packages/cli     securepublish-cli (publish, rename, list, revoke, doctor, mock-serve)
 packages/edge    Worker (SSO + domain/--to ACL)
 skills/secure-publish/SKILL.md
 examples/        panel-vendas.html, panel-ops.html
