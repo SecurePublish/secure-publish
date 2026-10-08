@@ -115,6 +115,8 @@ export async function requireSsoSession(request, env, opts = {}) {
         return {
           ok: false,
           status: 403,
+          reason: "domain_not_allowed",
+          user: { email: session.email, provider: session.provider },
           body: forApi ? "domain_not_allowed" : "Acesso negado: domínio de e-mail não autorizado.\n",
         };
       }
@@ -285,6 +287,17 @@ export async function handleAuthRoutes(request, env) {
     (request.method === "GET" || request.method === "HEAD")
   ) {
     return oauthProvidersResponse(request, env);
+  }
+
+  // Switch account: clear session like logout, then Google prompt=select_account.
+  if (
+    (url.pathname === "/auth/switch" ||
+      url.pathname === "/auth/switch/" ||
+      url.pathname === "/_auth/switch" ||
+      url.pathname === "/_auth/switch/") &&
+    (request.method === "GET" || request.method === "HEAD")
+  ) {
+    return switchAccountResponse(request, env);
   }
 
   // Cameron contract: GET /auth/{google|microsoft|github}
@@ -513,8 +526,13 @@ function labelProvider(name) {
   return name;
 }
 
-/** @param {URL} url @param {Record<string, string | undefined>} env @param {string} provider */
-function oauthStart(url, env, provider) {
+/**
+ * @param {URL} url
+ * @param {Record<string, string | undefined>} env
+ * @param {string} provider
+ * @param {{ selectAccount?: boolean, extraCookies?: string[] }} [opts]
+ */
+function oauthStart(url, env, provider, opts = {}) {
   const cfg = PROVIDERS[provider];
   const clientId = env[cfg.idEnv];
   if (!clientId) {
@@ -540,6 +558,9 @@ function oauthStart(url, env, provider) {
   if (provider === "google" || provider === "microsoft") {
     params.set("access_type", "online");
   }
+  if (opts.selectAccount && provider === "google") {
+    params.set("prompt", "select_account");
+  }
 
   // If the user started OAuth on a non-canonical host, bounce through the
   // canonical origin so the callback response can mint Domain=.securepublish.work.
@@ -551,10 +572,18 @@ function oauthStart(url, env, provider) {
     const bounce = new URL(startPath, canonical + "/");
     bounce.searchParams.set("return_to", returnTo);
     if (stateBody.device) bounce.searchParams.set("device", stateBody.device);
+    if (opts.selectAccount) bounce.searchParams.set("prompt", "select_account");
     return Response.redirect(bounce.toString(), 302);
   }
 
-  return Response.redirect(`${cfg.authUrl}?${params}`, 302);
+  const headers = new Headers({
+    location: `${cfg.authUrl}?${params}`,
+    "cache-control": "no-store",
+  });
+  for (const cookie of opts.extraCookies || []) {
+    headers.append("set-cookie", cookie);
+  }
+  return new Response(null, { status: 302, headers });
 }
 
 /**
@@ -634,7 +663,7 @@ async function oauthCallback(request, env, provider) {
     mintUrl
   );
 
-  let location = safeReturnTo(state.returnTo, env);
+  let location = resolvePostLoginLocation(state.returnTo, env);
   if (state.device && /^[a-f0-9]{64}$/.test(state.device)) {
     let linked = false;
     try {
@@ -732,6 +761,82 @@ async function fetchUserEmail(provider, cfg, accessToken) {
   if (!res.ok) return null;
   const me = await res.json();
   return me.email || null;
+}
+
+/**
+ * Panel-host return URL for /auth/switch. Parse with `new URL()`.
+ * Accept only https, hostname exactly `securepublish.work` or ending
+ * `.securepublish.work` (no includes/startsWith on the host), empty
+ * username/password. Keep only pathname (drop query/hash). Reject `//`,
+ * `\\`, or any backslash in the path. Fail closed → null.
+ * @param {unknown} raw
+ * @returns {string | null}
+ */
+export function validateSwitchReturn(raw) {
+  if (raw == null || typeof raw !== "string" || raw.includes("\\")) return null;
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "https:") return null;
+  if (u.username !== "" || u.password !== "") return null;
+  const hostname = u.hostname;
+  if (hostname !== "securepublish.work" && !hostname.endsWith(".securepublish.work")) {
+    return null;
+  }
+  const pathname = u.pathname;
+  if (pathname.startsWith("//") || pathname.startsWith("\\\\") || pathname.includes("\\")) {
+    return null;
+  }
+  return `https://${hostname}${pathname}`;
+}
+
+/**
+ * Re-validate post-login return (do not trust OAuth state blindly).
+ * Valid panel/product hosts win; otherwise the existing console-safe fallback.
+ * @param {unknown} returnTo
+ * @param {Record<string, string | undefined>} env
+ */
+export function resolvePostLoginLocation(returnTo, env) {
+  if (typeof returnTo === "string") {
+    try {
+      const u = new URL(returnTo);
+      if (consoleOrigins(env).includes(u.origin)) {
+        return safeReturnTo(returnTo, env);
+      }
+    } catch {
+      /* relative or garbage — fall through */
+    }
+  }
+  const validated = validateSwitchReturn(returnTo);
+  if (validated) return validated;
+  return safeReturnTo(typeof returnTo === "string" ? returnTo : "", env);
+}
+
+/**
+ * GET /auth/switch?return= — clear session like logout, then Google select_account.
+ * @param {Request} request
+ * @param {Record<string, string | undefined>} env
+ */
+function switchAccountResponse(request, env) {
+  const url = new URL(request.url);
+  const canonical = oauthCallbackOrigin(env);
+  if (url.origin !== canonical) {
+    const bounce = new URL("/auth/switch", canonical + "/");
+    const ret = url.searchParams.get("return");
+    if (ret) bounce.searchParams.set("return", ret);
+    return Response.redirect(bounce.toString(), 302);
+  }
+
+  const dest = validateSwitchReturn(url.searchParams.get("return")) || logoutRedirectTarget(env);
+  const startUrl = new URL("/_auth/start/google", canonical + "/");
+  startUrl.searchParams.set("return_to", dest);
+  return oauthStart(startUrl, env, "google", {
+    selectAccount: true,
+    extraCookies: clearSessionCookieVariants(env, request.url),
+  });
 }
 
 /**

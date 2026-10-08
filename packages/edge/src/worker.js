@@ -12,10 +12,16 @@
  * Console API: see ../README.md and secure-publish-app/API-CONTRACT.md
  */
 
-import { requireSsoSession, handleAuthRoutes, ssoMode } from "./sso.js";
-import { checkPanelAccess, accessDeniedBody } from "./acl.js";
+import { requireSsoSession, handleAuthRoutes } from "./sso.js";
+import { checkPanelAccess } from "./acl.js";
 import { handleApiRoutes } from "./api.js";
 import { decodeRecord, recordView, getTenant, PANEL_ID_RE } from "./kv.js";
+import {
+  notFoundViewerPage,
+  rootViewerPage,
+  generic403ViewerPage,
+  domainNotAllowedViewerPage,
+} from "./viewer-page.js";
 
 async function resolvePanel(key, panels) {
   if (!key || typeof key !== "string") return { ok: false };
@@ -163,52 +169,28 @@ export default {
 
     const hostGate = await assertHostAllowed(request, env);
     if (!hostGate.ok) {
+      if (hostGate.status === 404) return notFoundViewerPage();
       return new Response(hostGate.body || "Forbidden\n", {
         status: hostGate.status || 403,
-        headers: { "content-type": "text/plain; charset=utf-8" },
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
       });
     }
 
     const parts = url.pathname.split("/").filter(Boolean);
 
     if (parts.length === 0) {
-      const mode = ssoMode(env);
-      return new Response(
-        [
-          "Secure Publish",
-          "",
-          "URL identifica o dashboard; SSO autentica; ACL de domínio/--to autoriza.",
-          `SSO mode: ${mode}`,
-          "V1: company-wide = email domain (not org membership).",
-          "",
-          "Console API: /api/me /api/panels /api/hosting/* (SSO required)",
-          "OAuth: /auth/{google|microsoft|github} · /auth/logout",
-          "Use /{panel-id} após login SSO.",
-          "Publish: securepublish-cli publish <file.html> [--to email,email]",
-          "",
-        ].join("\n"),
-        {
-          status: 404,
-          headers: { "content-type": "text/plain; charset=utf-8" },
-        }
-      );
+      return rootViewerPage();
     }
 
     const panelId = parts[0];
     const panel = await resolvePanel(panelId, env.PANELS);
     if (!panel.ok) {
-      return new Response("Not found — invalid or unknown panel id.", {
-        status: 404,
-        headers: { "content-type": "text/plain; charset=utf-8" },
-      });
+      return notFoundViewerPage();
     }
 
     const bind = await assertPanelHostBinding(request, env, panel.record);
     if (!bind.ok) {
-      return new Response(bind.body || "Not found — host not bound.\n", {
-        status: bind.status || 404,
-        headers: { "content-type": "text/plain; charset=utf-8" },
-      });
+      return notFoundViewerPage();
     }
 
     const sso = await requireSsoSession(request, env);
@@ -216,9 +198,12 @@ export default {
       if (sso.redirectUrl) {
         return Response.redirect(new URL(sso.redirectUrl, url.origin).toString(), 302);
       }
+      if (sso.reason === "domain_not_allowed") {
+        return domainNotAllowedViewerPage(sso.user?.email);
+      }
       return new Response(sso.body || "Unauthorized — SSO required.\n", {
         status: sso.status || 403,
-        headers: { "content-type": "text/plain; charset=utf-8" },
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
       });
     }
 
@@ -229,13 +214,11 @@ export default {
       panel.record.publisherEmail
     );
     if (!acl.ok) {
-      return new Response(accessDeniedBody(acl.reason), {
-        status: 403,
-        headers: {
-          "content-type": "text/plain; charset=utf-8",
-          "x-secure-publish-acl": acl.reason || "denied",
-        },
-      });
+      const email = sso.user?.email;
+      if (acl.reason === "domain_not_allowed") {
+        return domainNotAllowedViewerPage(email);
+      }
+      return generic403ViewerPage(email);
     }
 
     // Best-effort view analytics (PII stored server-side; API exposes only to SSO tenant).

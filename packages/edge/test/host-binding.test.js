@@ -166,7 +166,12 @@ describe("panel serve — fail-closed host binding", () => {
     assert.equal(res.status, 404);
     assert.equal(res.headers.get("location"), null);
     const body = await res.text();
-    assert.match(body, /host not bound/i);
+    assert.match(
+      body,
+      /Não achamos este dashboard\. O link pode estar errado ou ter sido removido\./
+    );
+    assert.match(body, /We couldn't find this dashboard/);
+    assert.equal(body.toLowerCase().includes("host not bound"), false);
   });
 
   it("current slug + matching publisher → 200 HTML", async () => {
@@ -302,7 +307,8 @@ describe("claim-reserved infra hosts — fail-closed panel serve", () => {
       assert.equal(res.headers.get("location"), null);
       const body = await res.text();
       assert.equal(body.includes(PANEL_HTML), false);
-      assert.match(body, /host not bound/i);
+      assert.match(body, /Não achamos este dashboard/);
+      assert.equal(body.toLowerCase().includes("host not bound"), false);
     });
   }
 
