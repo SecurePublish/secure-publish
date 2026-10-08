@@ -119,6 +119,54 @@ describe("API shape helpers", () => {
     assert.equal(viewers[0].email, "ana@acme.example");
     assert.ok(viewers[0].first);
     assert.ok(viewers[0].last);
+    assert.equal(viewers[0].firstAt, "2026-10-02T06:19:00.000Z");
+    assert.equal(viewers[0].lastAt, "2026-10-02T06:41:00.000Z");
+  });
+
+  it("viewsToApi returns ISO UTC firstAt/lastAt for a viewer seen on two days", () => {
+    const { viewers } = viewsToApi({
+      count: 3,
+      byEmail: {
+        "zoe@acme.example": {
+          first: "2026-10-08T13:07:00.000Z",
+          last: "2026-10-08T13:07:00.000Z",
+        },
+        "ana@acme.example": {
+          first: "2026-10-07T00:47:12.000Z",
+          last: "2026-10-08T13:07:00.000Z",
+        },
+      },
+    });
+    assert.deepEqual(
+      viewers.map((v) => v.email),
+      ["ana@acme.example", "zoe@acme.example"]
+    );
+    assert.equal(viewers[0].first, "21:47");
+    assert.equal(viewers[0].last, "10:07");
+    assert.equal(viewers[0].firstAt, "2026-10-07T00:47:12.000Z");
+    assert.equal(viewers[0].lastAt, "2026-10-08T13:07:00.000Z");
+    assert.equal(viewers[1].firstAt, "2026-10-08T13:07:00.000Z");
+    assert.equal(viewers[1].lastAt, "2026-10-08T13:07:00.000Z");
+  });
+
+  it("viewsToApi sets firstAt/lastAt to null when stored value is missing or invalid", () => {
+    const { viewers } = viewsToApi({
+      byEmail: {
+        "ana@acme.example": {
+          first: "",
+          last: "not-a-date",
+        },
+        "bruno@acme.example": {},
+      },
+    });
+    assert.equal(viewers[0].email, "ana@acme.example");
+    assert.equal(viewers[0].first, "");
+    assert.equal(viewers[0].last, "");
+    assert.equal(viewers[0].firstAt, null);
+    assert.equal(viewers[0].lastAt, null);
+    assert.equal(viewers[1].email, "bruno@acme.example");
+    assert.equal(viewers[1].firstAt, null);
+    assert.equal(viewers[1].lastAt, null);
   });
 
   it("formatPublishedLabel returns a local Sao Paulo label without timezone suffix", () => {
