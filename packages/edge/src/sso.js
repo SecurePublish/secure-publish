@@ -225,6 +225,43 @@ const PROVIDERS = {
 };
 
 /**
+ * IdPs with both CLIENT_ID and CLIENT_SECRET set (order matches PROVIDERS).
+ * @param {Record<string, string | undefined>} env
+ * @returns {string[]}
+ */
+function configuredProviders(env) {
+  return Object.keys(PROVIDERS).filter((name) => {
+    const cfg = PROVIDERS[name];
+    return Boolean(env[cfg.idEnv] && env[cfg.secretEnv]);
+  });
+}
+
+/**
+ * GET /auth/providers — public IdP discovery for console signup/login.
+ * CORS + credentials match /api/* so a cross-origin CONSOLE_ORIGIN works.
+ */
+function oauthProvidersResponse(request, env) {
+  const origin = request.headers.get("Origin") || "";
+  const allowed = consoleOrigins(env);
+  const headers = {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    Vary: "Origin",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Accept",
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Max-Age": "86400",
+  };
+  if (origin && allowed.includes(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+  }
+  return new Response(JSON.stringify({ providers: configuredProviders(env) }), {
+    status: 200,
+    headers,
+  });
+}
+
+/**
  * Handle /_auth/* and contract /auth/{provider}.
  * @returns {Promise<Response | null>}
  */
@@ -242,6 +279,14 @@ export async function handleAuthRoutes(request, env) {
     return logoutResponse(request, env);
   }
 
+  // Console discovery: GET /auth/providers (must not fall through to panel 404).
+  if (
+    (url.pathname === "/auth/providers" || url.pathname === "/auth/providers/") &&
+    (request.method === "GET" || request.method === "HEAD")
+  ) {
+    return oauthProvidersResponse(request, env);
+  }
+
   // Cameron contract: GET /auth/{google|microsoft|github}
   const contractStart = url.pathname.match(/^\/auth\/(google|github|microsoft)\/?$/);
   if (contractStart) {
@@ -256,6 +301,14 @@ export async function handleAuthRoutes(request, env) {
       url.searchParams.set("return_to", url.searchParams.get("next"));
     }
     return oauthStart(url, env, contractStart[1]);
+  }
+
+  // Claim remaining /auth/* so they never hit panel-id 404 on app.*.
+  if (url.pathname.startsWith("/auth/")) {
+    return new Response("Not found\n", {
+      status: 404,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
   }
 
   if (!url.pathname.startsWith("/_auth/")) return null;
