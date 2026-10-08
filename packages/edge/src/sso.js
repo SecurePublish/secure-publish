@@ -13,10 +13,22 @@
  */
 
 import { jwtVerify, createRemoteJWKSet } from "jose";
-import { approveDeviceCode } from "./kv.js";
+import { approveDeviceCode, getTenant } from "./kv.js";
+import {
+  isCustomCustomerHost,
+  isOwnZoneHost,
+  isSafeRelativeReturn,
+  normalizeCustomHostname,
+  requestHost,
+} from "./hostname.js";
 
 const COOKIE_NAME = "secure_publish_session";
-const SESSION_TTL_SEC = 60 * 60 * 12; // 12h
+/** Host-only cookie on customer custom hostnames. `__Host-` forbids Domain=. */
+export const HOST_SESSION_COOKIE = "__Host-sp_session";
+/** Login-CSRF nonce on the customer host; hash-only is sent to `app.`. */
+export const HOST_HANDOFF_COOKIE = "__Host-sp_handoff";
+export const HANDOFF_COOKIE_MAX_AGE = 60;
+export const SESSION_TTL_SEC = 60 * 60 * 12; // 12h
 
 /** Single production OAuth callback host (Google allows one primary redirect URI). */
 const DEFAULT_OAUTH_CALLBACK_ORIGIN = "https://app.securepublish.work";
@@ -184,6 +196,36 @@ export async function requireSsoSession(request, env, opts = {}) {
       return { ok: false, status: 401, body: "unauthorized" };
     }
     return result;
+  }
+
+  const host = requestHost(request);
+
+  // Customer custom host: Domain=.securepublish.work is not sent here.
+  // Panel HTML needs a host-bound __Host-sp_session. API must never accept it.
+  if (isCustomCustomerHost(host) && mode === "oauth") {
+    if (forApi) {
+      return { ok: false, status: 401, body: "unauthorized" };
+    }
+    const bound = await readHostBoundSessionCookie(request, env.SESSION_SECRET);
+    if (bound && bound.host === host) {
+      if (oauthEmailDeniedByDomainGate(bound.email, env)) {
+        return {
+          ok: false,
+          status: 403,
+          body: "Acesso negado: domínio de e-mail não autorizado.\n",
+        };
+      }
+      return { ok: true, user: { email: bound.email, provider: bound.provider } };
+    }
+    const url = new URL(request.url);
+    const ret = isSafeRelativeReturn(url.pathname) ? url.pathname : "/";
+    const nonce = mintHandoffNonce();
+    const nonceHash = await hashHandoffNonce(nonce);
+    const dest = new URL("https://app.securepublish.work/auth/handoff");
+    dest.searchParams.set("host", host);
+    dest.searchParams.set("return", ret);
+    dest.searchParams.set("nh", nonceHash);
+    return { ok: false, redirectUrl: dest.toString(), handoffNonce: nonce };
   }
 
   // oauth
@@ -703,7 +745,7 @@ async function oauthCallback(request, env, provider) {
     mintUrl
   );
 
-  let location = safeReturnTo(state.returnTo, env);
+  let location = await safeReturnTo(state.returnTo, env);
   if (state.device && /^[a-f0-9]{64}$/.test(state.device)) {
     let linked = false;
     try {
@@ -807,14 +849,23 @@ async function fetchUserEmail(provider, cfg, accessToken, env = {}) {
   return me.email || null;
 }
 
-/**
- * Relative paths on Worker, or absolute URLs only if origin ∈ CONSOLE_ORIGIN.
- */
-function safeReturnTo(path, env) {
-  if (!path || typeof path !== "string") return "/";
+function defaultReturnTo(env) {
   const allowed = consoleOrigins(env);
-  // Relative paths belong to the console (Pages), not panel ids on the Worker.
-  if (path.startsWith("/") && !path.startsWith("//")) {
+  return allowed.length ? allowed[0] + "/" : "/";
+}
+
+/**
+ * Login `next` / `return_to`.
+ * Relative paths (no //, no backslash) remap to CONSOLE_ORIGIN.
+ * Absolute https URLs: CONSOLE_ORIGIN, or *.securepublish.work / apex, or a
+ * customer hostname that exact-matches KV after claim normalization with
+ * customVerified:true AND status active. No suffix/substring matching for
+ * customer hosts. No open redirect.
+ */
+export async function safeReturnTo(path, env) {
+  if (!path || typeof path !== "string") return defaultReturnTo(env);
+  const allowed = consoleOrigins(env);
+  if (isSafeRelativeReturn(path)) {
     if (allowed.length) {
       try {
         return new URL(path, allowed[0] + "/").toString();
@@ -826,11 +877,34 @@ function safeReturnTo(path, env) {
   }
   try {
     const u = new URL(path);
+    if (u.protocol !== "https:") return defaultReturnTo(env);
+    if (u.username || u.password) return defaultReturnTo(env);
     if (allowed.includes(u.origin)) return u.toString();
+
+    const n = normalizeCustomHostname(u.hostname);
+    if (!n.ok) return defaultReturnTo(env);
+    u.hostname = n.hostname;
+    if (isOwnZoneHost(n.hostname)) return u.toString();
+
+    if (env?.PANELS) {
+      const owner = await env.PANELS.get(`host:custom:${n.hostname}`);
+      if (owner) {
+        const tenant = await getTenant(env.PANELS, owner);
+        const claimed = normalizeCustomHostname(String(tenant?.customHostname || ""));
+        if (
+          claimed.ok &&
+          claimed.hostname === n.hostname &&
+          tenant?.customVerified === true &&
+          tenant?.customStatus === "active"
+        ) {
+          return u.toString();
+        }
+      }
+    }
   } catch {
     /* ignore */
   }
-  return allowed.length ? allowed[0] + "/" : "/";
+  return defaultReturnTo(env);
 }
 
 
@@ -867,6 +941,12 @@ function logoutResponse(request, env) {
   const headers = new Headers({
     "cache-control": "no-store",
   });
+  const host = requestHost(request);
+  if (isCustomCustomerHost(host)) {
+    headers.append("set-cookie", clearHostBoundSessionCookie());
+    headers.set("location", "https://app.securepublish.work/auth/logout");
+    return new Response(null, { status: 302, headers });
+  }
   // Append (not set): browsers keep host-only cookies separate from Domain=
   // cookies. Clearing only Domain=.securepublish.work leaves a pre-Domain
   // host-only secure_publish_session on app.securepublish.work as a zombie.
@@ -937,15 +1017,90 @@ function cookieAttrs(env, requestUrl) {
   return { sameSite: "Lax", domain: "" };
 }
 
-async function mintSessionCookie(payload, secret, env = {}, requestUrl = "") {
+async function signedCookieValue(payload, secret) {
   const body = btoa(JSON.stringify(payload))
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
   const sig = await hmacSign(body, secret);
-  const value = `${body}.${sig}`;
+  return `${body}.${sig}`;
+}
+
+async function mintSessionCookie(payload, secret, env = {}, requestUrl = "") {
+  const value = await signedCookieValue(payload, secret);
   const { sameSite, domain } = cookieAttrs(env, requestUrl);
   return `${COOKIE_NAME}=${value}; Path=/${domain}; HttpOnly; Secure; SameSite=${sameSite}; Max-Age=${SESSION_TTL_SEC}`;
+}
+
+/**
+ * New host-bound session on a customer hostname. The handoff code is never
+ * the session. No Domain= (forbidden by __Host- prefix).
+ */
+export async function mintHostBoundSessionCookie(payload, secret) {
+  const value = await signedCookieValue(payload, secret);
+  return `${HOST_SESSION_COOKIE}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_TTL_SEC}`;
+}
+
+export function clearHostBoundSessionCookie() {
+  return `${HOST_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+}
+
+function bytesToBase64Url(bytes) {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlToBytes(s) {
+  const raw = String(s || "");
+  const pad = raw.length % 4 === 0 ? "" : "=".repeat(4 - (raw.length % 4));
+  const b64 = raw.replace(/-/g, "+").replace(/_/g, "/") + pad;
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/** Random 32-byte nonce, base64url-encoded for the `__Host-sp_handoff` cookie. */
+export function mintHandoffNonce() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return bytesToBase64Url(bytes);
+}
+
+/** SHA-256 of the nonce bytes, base64url — the only value sent to `app.`. */
+export async function hashHandoffNonce(nonce) {
+  const bytes = base64UrlToBytes(nonce);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return bytesToBase64Url(new Uint8Array(digest));
+}
+
+export function mintHandoffCookie(nonce) {
+  return `${HOST_HANDOFF_COOKIE}=${nonce}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${HANDOFF_COOKIE_MAX_AGE}`;
+}
+
+export function clearHandoffCookie() {
+  return `${HOST_HANDOFF_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+}
+
+export function readHandoffNonce(request) {
+  const values = sessionCookieValues(
+    request.headers.get("cookie") || "",
+    HOST_HANDOFF_COOKIE
+  );
+  return values[0] || "";
+}
+
+export async function handoffNonceMatches(cookieNonce, storedHash) {
+  if (!cookieNonce || !storedHash) return false;
+  let got;
+  try {
+    got = await hashHandoffNonce(cookieNonce);
+  } catch {
+    return false;
+  }
+  if (got.length !== storedHash.length) return false;
+  return timingSafeEqual(got, storedHash);
 }
 
 function clearSessionCookie(env = {}, requestUrl = "") {
@@ -980,9 +1135,10 @@ function clearSessionCookieVariants(_env = {}, _requestUrl = "") {
  * alone rejected valid Domain cookies when an invalid sibling was listed first.
  * @returns {string[]}
  */
-function sessionCookieValues(raw) {
+function sessionCookieValues(raw, cookieName = COOKIE_NAME) {
   const out = [];
-  const re = new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]*)`, "g");
+  const escaped = cookieName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(?:^|;\\s*)${escaped}=([^;]*)`, "g");
   let m;
   while ((m = re.exec(String(raw || "")))) {
     let v = (m[1] || "").trim();
@@ -1019,6 +1175,20 @@ async function readSessionCookie(request, secret) {
   return null;
 }
 
+export async function readHostBoundSessionCookie(request, secret) {
+  if (!secret) return null;
+  const values = sessionCookieValues(
+    request.headers.get("cookie") || "",
+    HOST_SESSION_COOKIE
+  );
+  const host = requestHost(request);
+  for (const value of values) {
+    const session = await parseSessionValue(value, secret);
+    if (session && session.host === host) return session;
+  }
+  return null;
+}
+
 async function hmacSign(message, secret) {
   const key = await crypto.subtle.importKey(
     "raw",
@@ -1039,4 +1209,10 @@ function timingSafeEqual(a, b) {
 }
 
 /** Test/helper export */
-export { readSessionCookie, mintSessionCookie, clearSessionCookie, clearSessionCookieVariants, COOKIE_NAME };
+export {
+  readSessionCookie,
+  mintSessionCookie,
+  clearSessionCookie,
+  clearSessionCookieVariants,
+  COOKIE_NAME,
+};

@@ -331,4 +331,23 @@ describe("CSRF for cookie-authenticated /api mutations", () => {
     assert.equal(accessRes.status, 403);
     assert.equal((await accessRes.json()).error, "csrf_origin");
   });
+
+  it("POST /api/hosting/custom/verify with a bad Origin is 403 csrf_origin", async () => {
+    const env = oauthEnv(tenantKv(), { CUSTOM_DOMAINS_ENABLED: "true" });
+    const cookie = await cookieFor(env);
+    const res = await worker.fetch(
+      appReq("/api/hosting/custom/verify", {
+        method: "POST",
+        headers: {
+          Origin: `https://${PANEL_HOST}`,
+          Cookie: cookie,
+          "content-type": "application/json",
+        },
+        body: "{}",
+      }),
+      env
+    );
+    assert.equal(res.status, 403);
+    assert.equal((await res.json()).error, "csrf_origin");
+  });
 });

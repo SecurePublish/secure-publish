@@ -13,9 +13,9 @@
  *
  * Tenant hosting (per signed-in user):
  *   tenant:user:{email}       → { email, domain, host, slug?, customHostname?, customVerified?,
- *                                 customVerifyToken?, updatedAt }
+ *                                 customVerifyToken?, customStatus?, customCfId?, updatedAt }
  *   host:sub:{slug}           → email (owner lock)
- *   host:custom:{hostname}    → email (owner lock)
+ *   host:custom:{hostname}    → email (exclusive lock at active / records_missing; not at claim)
  *
  * PanelRecord v1+:
  *   { v, title?, name?, publishedAt, publisherEmail?, access: { mode, emails?, domains? }, html }
@@ -24,7 +24,6 @@
  */
 
 import { normalizeEmails, normalizeDomains } from "./acl.js";
-import { lookupTxt, txtMatchesVerify } from "./dns.js";
 
 /** Lowercase RFC 4648 base32 alphabet (no padding). */
 export const PANEL_CODE_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
@@ -328,120 +327,6 @@ export async function claimSubdomain(kv, slug, email) {
   return { ok: true, host, tenant };
 }
 
-/** High-entropy opaque token for TXT ownership (not the owner email). */
-function newCustomVerifyToken() {
-  return randomHex(32);
-}
-
-/**
- * TXT verify challenge for a pending custom hostname claim.
- * @param {string} hostname
- * @param {string | null | undefined} token
- */
-export function customVerifyChallenge(hostname, token) {
-  const h = String(hostname || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\.$/, "");
-  const t = String(token || "").trim();
-  return {
-    type: "txt",
-    name: `_secure-publish.${h}`,
-    value: t ? `sp-verify=${t}` : "",
-  };
-}
-
-/**
- * Reserve custom hostname. Serving requires customVerified === true
- * (TXT/CNAME proof — John/DNS). Until verified, host stays on subdomain.
- * TXT value is an opaque per-claim token (not the owner email).
- */
-export async function claimCustomHostname(kv, hostname, email) {
-  const h = String(hostname || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\.$/, "");
-  if (!h || !/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(h) || h.includes("..")) {
-    return { ok: false, status: 400, error: "invalid_hostname" };
-  }
-  if (h.endsWith(".securepublish.work") || h.endsWith(".workers.dev")) {
-    return { ok: false, status: 400, error: "use_subdomain_endpoint" };
-  }
-  const lockKey = `host:custom:${h}`;
-  const existing = await kv.get(lockKey);
-  const owner = String(email || "").trim().toLowerCase();
-  if (existing && existing !== owner) {
-    return { ok: false, status: 409, error: "hostname_taken" };
-  }
-  const prev = await getTenant(kv, owner);
-  if (prev?.customHostname && prev.customHostname !== h) {
-    await kv.delete(`host:custom:${prev.customHostname}`);
-  }
-  await kv.put(lockKey, owner);
-  const token = newCustomVerifyToken();
-  const verify = customVerifyChallenge(h, token);
-  // Ownership not verified yet — do not switch serving host.
-  const tenant = await putTenant(kv, {
-    ...(prev || {}),
-    email: owner,
-    customHostname: h,
-    customVerified: false,
-    customVerifyToken: token,
-    host: prev?.host || null,
-    slug: prev?.slug || null,
-  });
-  return {
-    ok: true,
-    host: tenant.host || null,
-    customHostname: h,
-    customVerified: false,
-    verify: {
-      ...verify,
-      note: "Add this TXT, then POST /api/hosting/custom/verify. Host not switched until verified.",
-    },
-    tenant,
-  };
-}
-
-/**
- * Drop an unverified custom-hostname claim for the session owner.
- * Does not change serving subdomain host/slug. Verified claims must use host-switch flow.
- */
-export async function clearPendingCustomHostname(kv, email) {
-  const owner = String(email || "").trim().toLowerCase();
-  if (!owner || !owner.includes("@")) {
-    return { ok: false, status: 400, error: "missing_email" };
-  }
-  const tenant = await getTenant(kv, owner);
-  if (!tenant?.customHostname || tenant.customVerified === true) {
-    if (tenant?.customHostname && tenant.customVerified === true) {
-      return { ok: false, status: 409, error: "custom_already_verified" };
-    }
-    return { ok: false, status: 404, error: "no_pending_custom_hostname" };
-  }
-  const h = String(tenant.customHostname)
-    .trim()
-    .toLowerCase()
-    .replace(/\.$/, "");
-  const lock = await kv.get(`host:custom:${h}`);
-  if (lock && lock !== owner) {
-    return { ok: false, status: 403, error: "hostname_taken" };
-  }
-  await kv.delete(`host:custom:${h}`);
-  const { customHostname: _ch, customVerified: _cv, customVerifyToken: _tok, ...rest } =
-    tenant;
-  await putTenant(kv, {
-    ...rest,
-    email: owner,
-    customHostname: null,
-    customVerified: false,
-    customVerifyToken: null,
-    host: tenant.host || null,
-    slug: tenant.slug || null,
-  });
-  return { ok: true };
-}
-
 export function accessToApiMode(access) {
   const mode = (access?.mode || "company").toLowerCase();
   if (mode === "allowlist") return "allowlist";
@@ -534,81 +419,6 @@ export function buildAccessFromPatch(body, publisherEmail) {
 }
 
 export { normalizeEmails, normalizeDomains };
-
-/**
- * Prove ownership of claimed customHostname via TXT at
- * `_secure-publish.<host>` = `sp-verify=<opaque-token>`.
- * On success sets customVerified=true and host=customHostname.
- * Clean break: email-based TXT values no longer verify — re-claim to get a token.
- *
- * @param {KVNamespace} kv
- * @param {string} email session owner
- * @param {{ lookupTxt?: Function, txtMatchesVerify?: Function }} [opts] test inject
- */
-export async function verifyCustomHostname(kv, email, opts = {}) {
-  const owner = String(email || "").trim().toLowerCase();
-  if (!owner || !owner.includes("@")) {
-    return { ok: false, status: 400, error: "missing_email" };
-  }
-  const tenant = await getTenant(kv, owner);
-  if (!tenant?.customHostname) {
-    return { ok: false, status: 400, error: "no_custom_hostname" };
-  }
-  const h = String(tenant.customHostname)
-    .trim()
-    .toLowerCase()
-    .replace(/\.$/, "");
-  const lock = await kv.get(`host:custom:${h}`);
-  if (lock && lock !== owner) {
-    return { ok: false, status: 403, error: "hostname_taken" };
-  }
-
-  const token = String(tenant.customVerifyToken || "").trim();
-  const verify = customVerifyChallenge(h, token);
-  if (!token || !verify.value) {
-    // Legacy email-based claims: force re-claim for an opaque token.
-    return { ok: false, status: 409, error: "reclaim_required", verify };
-  }
-
-  const doLookup = opts.lookupTxt || lookupTxt;
-  const matches = opts.txtMatchesVerify || txtMatchesVerify;
-
-  let dnsResult;
-  try {
-    dnsResult = await doLookup(verify.name);
-  } catch {
-    return { ok: false, status: 502, error: "dns_lookup_failed", verify };
-  }
-  if (!dnsResult?.ok) {
-    return { ok: false, status: 502, error: "dns_lookup_failed", verify };
-  }
-  const records = Array.isArray(dnsResult.records) ? dnsResult.records : [];
-  if (!records.length) {
-    return { ok: false, status: 422, error: "txt_not_found", verify };
-  }
-  if (!matches(records, verify.value)) {
-    return { ok: false, status: 422, error: "txt_mismatch", verify };
-  }
-
-  const updated = await putTenant(kv, {
-    ...tenant,
-    email: owner,
-    customHostname: h,
-    customVerified: true,
-    customVerifyToken: null,
-    // Switch serving host only after verified (resolveHost also gates on customVerified).
-    host: h,
-  });
-  return {
-    ok: true,
-    host: h,
-    customHostname: h,
-    customVerified: true,
-    verify,
-    tenant: updated,
-  };
-}
-
 
 const DEVICE_TTL_SEC = 600;
 /** Publish-only credential. 12h, revocable. Not a browser cookie. */

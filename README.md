@@ -154,6 +154,8 @@ export SECURE_PUBLISH_BASE_URL="https://demo.securepublish.work"
 
 Wildcard route `*.securepublish.work/*` → Worker **attached**. Fallback workers.dev still up. Google OAuth works. See [docs/DEPLOY-WILDCARD.md](docs/DEPLOY-WILDCARD.md) and `E2E-WILDCARD.txt`.
 
+Custom hostnames (Cloudflare for SaaS) are gated by Worker var `CUSTOM_DOMAINS_ENABLED` (default `"false"`). Setup: `CF_ZONE_ID` in `packages/edge/wrangler.toml`, secret `CF_SAAS_TOKEN` (never in git), daily cron in `[triggers]`, fallback origin `cname.securepublish.work`. Customer DNS: CNAME `share` → `cname.securepublish.work` and TXT `_secure-publish.share` → `sp-verify=<token>`. Contract: [docs/API-CONTRACT.md](docs/API-CONTRACT.md).
+
 ### 2. Instalar
 
 ```bash

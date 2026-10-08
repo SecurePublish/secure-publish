@@ -131,13 +131,14 @@ describe("documented /auth/* and /api/* on app host are not swallowed by panel 4
     { method: "GET", path: "/auth/logout" },
     { method: "POST", path: "/auth/logout" },
     { method: "GET", path: "/auth/providers" },
+    { method: "GET", path: "/auth/handoff" },
     { method: "GET", path: "/_auth/callback/google" },
     { method: "GET", path: "/_auth/callback/github" },
     { method: "GET", path: "/_auth/callback/microsoft" },
   ];
 
   it("lists every documented console route (guards against missing a contract path)", () => {
-    assert.equal(documented.length, 22);
+    assert.equal(documented.length, 23);
   });
 
   it("none of the documented app-host routes return the panel 404", async () => {

@@ -70,6 +70,9 @@ describe("API routes — Marcus checklist", () => {
       SSO_DEV_BYPASS: "1",
       CONSOLE_ORIGIN: "https://console.pages.dev",
       OAUTH_ALLOWED_DOMAINS: "localhost",
+      CUSTOM_DOMAINS_ENABLED: "true",
+      CF_ZONE_ID: "397f24981bc11c467ae86b5ee71a43e1",
+      CF_SAAS_TOKEN: "cf-saas-test-token-do-not-leak",
     };
   });
 
@@ -106,7 +109,9 @@ describe("API routes — Marcus checklist", () => {
     assert.equal(body.host, null);
     assert.equal(body.customHostname, null);
     assert.equal(body.customVerified, false);
-    assert.equal(body.verify, undefined);
+    assert.equal(body.customDomainsEnabled, true);
+    assert.equal(body.customRecords, undefined);
+    assert.equal(body.customStatus, undefined);
     assert.equal(res.headers.get("Access-Control-Allow-Origin"), "https://console.pages.dev");
     assert.equal(res.headers.get("Access-Control-Allow-Credentials"), "true");
   });
@@ -269,21 +274,24 @@ describe("API routes — Marcus checklist", () => {
           Origin: "https://console.pages.dev",
           "content-type": "application/json",
         },
-        body: JSON.stringify({ hostname: "dash.acme.example" }),
+        body: JSON.stringify({ hostname: "dashboards.example.com" }),
       }),
       env
     );
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.customVerified, false);
-    assert.ok(body.verify);
-    assert.equal(body.verify.type, "txt");
-    assert.equal(body.verify.name, "_secure-publish.dash.acme.example");
-    assert.match(body.verify.value, /^sp-verify=[0-9a-f]{64}$/);
-    assert.ok(!body.verify.value.includes("dev@localhost"), "must not publish owner email in DNS");
+    assert.equal(body.status, "pending_dns");
+    assert.ok(Array.isArray(body.records));
+    assert.equal(body.records[0].type, "CNAME");
+    assert.equal(body.records[0].name, "dashboards");
+    assert.equal(body.records[1].type, "TXT");
+    assert.equal(body.records[1].name, "_secure-publish.dashboards");
+    assert.match(body.records[1].value, /^sp-verify=[0-9a-f]{64}$/);
+    assert.ok(!body.records[1].value.includes("dev@localhost"), "must not publish owner email in DNS");
   });
 
-  it("GET /api/me returns pending custom-domain verify object", async () => {
+  it("GET /api/me returns pending custom-domain records", async () => {
     const res = await worker.fetch(
       new Request("https://app.securepublish.work/api/me", {
         headers: { Origin: "https://console.pages.dev" },
@@ -292,13 +300,13 @@ describe("API routes — Marcus checklist", () => {
     );
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.customHostname, "dash.acme.example");
+    assert.equal(body.customHostname, "dashboards.example.com");
     assert.equal(body.customVerified, false);
+    assert.equal(body.customStatus, "pending_dns");
     assert.equal(body.host, "wise.securepublish.work"); // serving host unchanged
-    assert.ok(body.verify);
-    assert.equal(body.verify.type, "txt");
-    assert.equal(body.verify.name, "_secure-publish.dash.acme.example");
-    assert.match(body.verify.value, /^sp-verify=[0-9a-f]{64}$/);
+    assert.ok(Array.isArray(body.customRecords));
+    assert.equal(body.customRecords[1].name, "_secure-publish.dashboards");
+    assert.match(body.customRecords[1].value, /^sp-verify=[0-9a-f]{64}$/);
   });
 
   it("(3) CORS preflight rejects unknown origin", async () => {
@@ -319,6 +327,7 @@ describe("API routes — Marcus checklist", () => {
       SSO_DEV_BYPASS: "1",
       CONSOLE_ORIGIN: "https://console.pages.dev",
       OAUTH_ALLOWED_DOMAINS: "localhost",
+      CUSTOM_DOMAINS_ENABLED: "true",
     };
     const res = await worker.fetch(
       new Request("https://app.securepublish.work/api/hosting/custom/verify", {
@@ -332,16 +341,7 @@ describe("API routes — Marcus checklist", () => {
     assert.equal(body.error, "no_custom_hostname");
   });
 
-  it("POST /api/hosting/custom/verify txt_not_found → 422, stays unverified", async () => {
-    const me = await (
-      await worker.fetch(
-        new Request("https://app.securepublish.work/api/me", {
-          headers: { Origin: "https://console.pages.dev" },
-        }),
-        env
-      )
-    ).json();
-    const expected = me.verify.value;
+  it("POST /api/hosting/custom/verify txt missing → 200 pending_dns, stays unverified", async () => {
     const res = await worker.fetch(
       new Request("https://app.securepublish.work/api/hosting/custom/verify", {
         method: "POST",
@@ -352,15 +352,15 @@ describe("API routes — Marcus checklist", () => {
         __lookupTxt: async () => ({ ok: true, records: [] }),
       }
     );
-    assert.equal(res.status, 422);
+    assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.error, "txt_not_found");
-    assert.equal(body.verify?.name, "_secure-publish.dash.acme.example");
-    assert.equal(body.verify?.value, expected);
-    assert.ok(!String(body.verify?.value || "").includes("@"));
+    assert.equal(body.status, "pending_dns");
+    assert.equal(body.customHostname, "dashboards.example.com");
+    assert.equal(body.records[1].name, "_secure-publish.dashboards");
+    assert.ok(!String(body.records[1].value || "").includes("@"));
   });
 
-  it("POST /api/hosting/custom/verify txt_mismatch → 422", async () => {
+  it("POST /api/hosting/custom/verify txt mismatch → 200 pending_dns", async () => {
     const res = await worker.fetch(
       new Request("https://app.securepublish.work/api/hosting/custom/verify", {
         method: "POST",
@@ -374,9 +374,9 @@ describe("API routes — Marcus checklist", () => {
         }),
       }
     );
-    assert.equal(res.status, 422);
+    assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.error, "txt_mismatch");
+    assert.equal(body.status, "pending_dns");
   });
 
   it("POST /api/hosting/custom/verify without SSO → 401", async () => {
@@ -394,17 +394,18 @@ describe("API routes — Marcus checklist", () => {
     assert.equal(res.status, 401);
   });
 
-  it("(5) unverified custom Host cannot serve panels", async () => {
+  it("(5) unverified custom Host cannot serve panels (identical unknown-panel 404)", async () => {
     const res = await worker.fetch(
-      new Request(`https://dash.acme.example/${PANEL_ID}`, {
-        headers: { Host: "dash.acme.example" },
+      new Request(`https://dashboards.example.com/${PANEL_ID}`, {
+        headers: { Host: "dashboards.example.com" },
       }),
       env
     );
-    assert.equal(res.status, 403);
+    assert.equal(res.status, 404);
+    assert.equal(await res.text(), "Not found — invalid or unknown panel id.");
   });
 
-  it("POST /api/hosting/custom/verify success → customVerified + host switch + serve OK", async () => {
+  it("POST /api/hosting/custom/verify success → active + host switch + serve OK", async () => {
     const meBefore = await (
       await worker.fetch(
         new Request("https://app.securepublish.work/api/me", {
@@ -413,7 +414,7 @@ describe("API routes — Marcus checklist", () => {
         env
       )
     ).json();
-    const tokenValue = meBefore.verify.value;
+    const tokenValue = meBefore.customRecords[1].value;
 
     const res = await worker.fetch(
       new Request("https://app.securepublish.work/api/hosting/custom/verify", {
@@ -423,17 +424,37 @@ describe("API routes — Marcus checklist", () => {
       {
         ...env,
         __lookupTxt: async (name) => {
-          assert.equal(name, "_secure-publish.dash.acme.example");
+          assert.equal(name, "_secure-publish.dashboards.example.com");
           return { ok: true, records: [tokenValue] };
+        },
+        __fetch: async (url, init = {}) => {
+          const method = (init.method || "GET").toUpperCase();
+          if (String(url).includes("/custom_hostnames") && method === "POST") {
+            return new Response(
+              JSON.stringify({
+                success: true,
+                result: { id: "cf-1", status: "active", ssl: { status: "active" } },
+              }),
+              { status: 200 }
+            );
+          }
+          if (String(url).includes("/custom_hostnames")) {
+            return new Response(
+              JSON.stringify({
+                success: true,
+                result: { id: "cf-1", status: "active", ssl: { status: "active" } },
+              }),
+              { status: 200 }
+            );
+          }
+          return new Response("nope", { status: 500 });
         },
       }
     );
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.ok, true);
-    assert.equal(body.customVerified, true);
-    assert.equal(body.customHostname, "dash.acme.example");
-    assert.equal(body.host, "dash.acme.example");
+    assert.equal(body.status, "active");
+    assert.equal(body.customHostname, "dashboards.example.com");
 
     const me = await worker.fetch(
       new Request("https://app.securepublish.work/api/me", {
@@ -442,14 +463,14 @@ describe("API routes — Marcus checklist", () => {
       env
     );
     const meBody = await me.json();
-    assert.equal(meBody.host, "dash.acme.example");
-    assert.equal(meBody.customHostname, "dash.acme.example");
+    assert.equal(meBody.host, "dashboards.example.com");
+    assert.equal(meBody.customHostname, "dashboards.example.com");
     assert.equal(meBody.customVerified, true);
-    assert.equal(meBody.verify, undefined);
+    assert.equal(meBody.customStatus, "active");
 
     const serve = await worker.fetch(
-      new Request(`https://dash.acme.example/${PANEL_ID}`, {
-        headers: { Host: "dash.acme.example" },
+      new Request(`https://dashboards.example.com/${PANEL_ID}`, {
+        headers: { Host: "dashboards.example.com" },
       }),
       env
     );
@@ -534,7 +555,7 @@ describe("DELETE /api/hosting/custom — pending claim rules", () => {
     ).json();
     assert.equal(me.customHostname, null);
     assert.equal(me.customVerified, false);
-    assert.equal(me.verify, undefined);
+    assert.equal(me.customRecords, undefined);
     assert.equal(me.host, "wise.securepublish.work");
   });
 
@@ -548,16 +569,17 @@ describe("DELETE /api/hosting/custom — pending claim rules", () => {
       env
     );
     assert.equal(res.status, 404);
-    assert.equal((await res.json()).error, "no_pending_custom_hostname");
+    assert.equal((await res.json()).error, "no_custom_hostname");
   });
 
-  it("409 when already verified (must use host-switch, not DELETE)", async () => {
+  it("deletes a verified custom hostname (CF id optional)", async () => {
     const env = freshEnv({
-      customHostname: "dash.acme.example",
+      customHostname: "dashboards.example.com",
       customVerified: true,
-      host: "dash.acme.example",
+      customStatus: "active",
+      host: "dashboards.example.com",
     });
-    await env.PANELS.put("host:custom:dash.acme.example", "dev@localhost");
+    await env.PANELS.put("host:custom:dashboards.example.com", "dev@localhost");
 
     const res = await worker.fetch(
       new Request("https://app.securepublish.work/api/hosting/custom", {
@@ -566,9 +588,8 @@ describe("DELETE /api/hosting/custom — pending claim rules", () => {
       }),
       env
     );
-    assert.equal(res.status, 409);
-    assert.equal((await res.json()).error, "custom_already_verified");
-    assert.equal(await env.PANELS.get("host:custom:dash.acme.example"), "dev@localhost");
+    assert.equal(res.status, 200);
+    assert.equal(await env.PANELS.get("host:custom:dashboards.example.com"), null);
   });
 
   it("owner-only: session cannot clear another tenant's pending lock", async () => {

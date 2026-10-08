@@ -244,6 +244,7 @@ describe("panel serve — fail-closed host binding", () => {
         email: "dev@localhost",
         customHostname: "dash.acme.example",
         customVerified: true,
+        customStatus: "active",
         slug: "wise",
         host: "wise.securepublish.work",
       }),

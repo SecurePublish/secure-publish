@@ -2,7 +2,8 @@
  * Console ↔ Worker API (Cameron contract / API-CONTRACT.md).
  *
  * Marcus checklist:
- * 1) Every /api/* requires SSO session
+ * 1) Every /api/* requires SSO session (CLI Bearer only on POST /api/panels
+ *    and PATCH /api/panels/:id/name; any other /api/* with Bearer → 401)
  * 2) PATCH access = publisher only
  * 3) CORS = exact CONSOLE_ORIGIN + credentials
  * 4) viewers[] PII only for the panel publisher (email === publisherEmail)
@@ -22,10 +23,6 @@ import {
   getViews,
   getTenant,
   claimSubdomain,
-  claimCustomHostname,
-  clearPendingCustomHostname,
-  verifyCustomHostname,
-  customVerifyChallenge,
   accessToApiMode,
   accessToAllowlist,
   formatPublishedLabel,
@@ -44,6 +41,13 @@ import {
   userFromPublishToken,
   revokePublishToken,
 } from "./kv.js";
+import {
+  claimCustomHostname,
+  verifyCustomHostname,
+  deleteCustomHostnameClaim,
+  tenantIsActiveCustom,
+} from "./custom-domain.js";
+import { customDomainsEnabled, customDnsRecords, validateCustomHostname } from "./hostname.js";
 
 export { consoleOrigins };
 
@@ -89,6 +93,19 @@ function unknownPath404() {
       "x-robots-tag": "noindex, nofollow",
     },
   });
+}
+
+/**
+ * CLI publish credential (`Authorization: Bearer`) is accepted only on
+ * POST /api/panels and PATCH /api/panels/:id/name. Presence on any other
+ * /api/* is 401 — never a cookie-session fallback.
+ * POST /api/session/revoke is handled before the auth block.
+ */
+function bearerAllowedOnRoute(method, pathname) {
+  const m = String(method || "").toUpperCase();
+  if (m === "POST" && pathname === "/api/panels") return true;
+  if (m === "PATCH" && /^\/api\/panels\/[^/]+\/name\/?$/.test(pathname)) return true;
+  return false;
 }
 
 /**
@@ -218,36 +235,35 @@ export async function handleApiRoutes(request, env) {
     return handleRevokePublish(request, env);
   }
 
-  const publishPost = url.pathname === "/api/panels" && request.method === "POST";
-  const namePatch =
-    /^\/api\/panels\/[^/]+\/name\/?$/.test(url.pathname) && request.method === "PATCH";
-  let bearerEmail = null;
-  if (publishPost || namePatch) {
-    const header = request.headers.get("authorization") || "";
-    const match = header.match(/^Bearer\s+(\S+)/i);
-    if (match) {
-      const tokenUser = await userFromPublishToken(env.PANELS, match[1]);
-      if (!tokenUser?.email) return err("unauthorized", 401, request, env);
-      bearerEmail = tokenUser.email;
+  // Bearer present → never use the session cookie. Invalid/unknown/expired → 401.
+  // Disallowed Bearer routes 401 immediately (cookie ignored).
+  const authHeader = request.headers.get("authorization") || "";
+  let email;
+  let domain;
+  let idp;
+  if (/^Bearer\b/i.test(authHeader.trim())) {
+    if (!bearerAllowedOnRoute(request.method, url.pathname)) {
+      return err("unauthorized", 401, request, env);
     }
-  }
-
-  // (1) Every other /api/* requires SSO — no anonymous data.
-  // POST /api/panels also accepts the publish credential in Authorization.
-  const sso = await requireSsoSession(request, env, { api: true });
-  if (!sso.ok && !((publishPost || namePatch) && bearerEmail)) {
-    return err(sso.body || "unauthorized", sso.status || 401, request, env);
-  }
-  const user = sso.ok ? sso.user : { email: bearerEmail, provider: "device" };
-  const email = (user.email || "").trim().toLowerCase();
-  if (bearerEmail && email && bearerEmail !== email) {
-    return err("forbidden", 403, request, env);
+    const match = authHeader.match(/^Bearer\s+(\S+)/i);
+    const tokenUser = match
+      ? await userFromPublishToken(env.PANELS, match[1])
+      : null;
+    if (!tokenUser?.email) return err("unauthorized", 401, request, env);
+    email = String(tokenUser.email || "").trim().toLowerCase();
+    idp = "device";
+  } else {
+    const sso = await requireSsoSession(request, env, { api: true });
+    if (!sso.ok) {
+      return err(sso.body || "unauthorized", sso.status || 401, request, env);
+    }
+    email = (sso.user?.email || "").trim().toLowerCase();
+    idp = sso.user?.provider || sso.user?.idp || "unknown";
   }
   if (!email || !email.includes("@")) {
     return err("missing_email", 403, request, env);
   }
-  const domain = email.split("@")[1];
-  const idp = user.provider || user.idp || "unknown";
+  domain = email.split("@")[1];
 
   if (url.pathname === "/api/me" && request.method === "GET") {
     return handleMe(request, env, { email, domain, idp });
@@ -307,13 +323,18 @@ function normalizeHost(host) {
 
 async function resolveHost(kv, email, env) {
   const tenant = await getTenant(kv, email);
-  if (tenant?.customHostname && tenant.customVerified) {
+  if (tenantIsActiveCustom(tenant)) {
     return normalizeHost(tenant.customHostname);
   }
-  if (tenant?.host) return normalizeHost(tenant.host);
   if (tenant?.slug) {
     const slug = String(tenant.slug).trim();
     if (slug) return `${slug}.securepublish.work`;
+  }
+  if (tenant?.host) {
+    const h = normalizeHost(tenant.host);
+    if (h && (h.endsWith(".securepublish.work") || !tenant.customHostname)) {
+      return h;
+    }
   }
   // Optional env hint only — still must be non-empty.
   return normalizeHost(env.DEFAULT_PANEL_HOST);
@@ -322,10 +343,11 @@ async function resolveHost(kv, email, env) {
 async function handleMe(request, env, { email, domain, idp }) {
   const host = await resolveHost(env.PANELS, email, env);
   const tenant = await getTenant(env.PANELS, email);
+  const flagOn = customDomainsEnabled(env);
   const customHostname = tenant?.customHostname
     ? String(tenant.customHostname).trim().toLowerCase() || null
     : null;
-  const customVerified = Boolean(tenant?.customVerified);
+  const customVerified = Boolean(tenant?.customVerified) && tenant?.customStatus === "active";
   const body = {
     email,
     idp,
@@ -335,10 +357,15 @@ async function handleMe(request, env, { email, domain, idp }) {
     host,
     customHostname,
     customVerified,
+    customDomainsEnabled: flagOn,
   };
-  if (customHostname && !customVerified) {
-    const token = tenant?.customVerifyToken || null;
-    body.verify = customVerifyChallenge(customHostname, token);
+  // When the flag is off, never include records (cname.securepublish.work must not appear).
+  if (flagOn && customHostname) {
+    body.customStatus = tenant.customStatus || "pending_dns";
+    body.customRecords = customDnsRecords(
+      customHostname,
+      tenant.customVerifyToken || ""
+    );
   }
   return json(body, 200, request, env);
 }
@@ -721,25 +748,31 @@ async function handleSubdomain(request, env, { email }) {
 }
 
 async function handleCustom(request, env, { email }) {
+  if (!customDomainsEnabled(env)) {
+    return err("custom_domains_disabled", 403, request, env);
+  }
   let body;
   try {
     body = await request.json();
   } catch {
     return err("invalid_json", 400, request, env);
   }
-  // (5) Claim only — ownership verification required before serving as host
-  const result = await claimCustomHostname(env.PANELS, body.hostname, email);
+  // Validate before ANY KV write or Cloudflare call.
+  const v = validateCustomHostname(body?.hostname);
+  if (!v.ok) {
+    return err(v.error, 400, request, env);
+  }
+  const result = await claimCustomHostname(env, v.hostname, email);
   if (!result.ok) {
     return err(result.error || "error", result.status || 400, request, env);
   }
-  // Contract: { host }. Until verified, return current serving host (subdomain) if any.
   return json(
     {
-      // Serving host only if already claimed (subdomain); never "" .
       host: normalizeHost(result.host),
       customHostname: result.customHostname,
       customVerified: false,
-      verify: result.verify,
+      status: result.status,
+      records: result.records,
     },
     200,
     request,
@@ -748,7 +781,7 @@ async function handleCustom(request, env, { email }) {
 }
 
 async function handleCustomDelete(request, env, { email }) {
-  const result = await clearPendingCustomHostname(env.PANELS, email);
+  const result = await deleteCustomHostnameClaim(env, email);
   if (!result.ok) {
     return err(result.error || "error", result.status || 400, request, env);
   }
@@ -756,28 +789,26 @@ async function handleCustomDelete(request, env, { email }) {
 }
 
 async function handleCustomVerify(request, env, { email }) {
-  // Body optional/ignored — uses claimed tenant.customHostname + session email.
-  const result = await verifyCustomHostname(env.PANELS, email, {
+  if (!customDomainsEnabled(env)) {
+    return err("custom_domains_disabled", 403, request, env);
+  }
+  const result = await verifyCustomHostname(env, email, {
     lookupTxt: env.__lookupTxt,
+    fetchFn: env.__fetch,
   });
   if (!result.ok) {
     return json(
-      {
-        error: result.error || "error",
-        verify: result.verify,
-      },
-      result.status || 400,
+      { error: result.error || "error" },
+      result.statusCode || result.status || 400,
       request,
       env
     );
   }
   return json(
     {
-      ok: true,
-      host: result.host,
+      status: result.status,
+      records: result.records,
       customHostname: result.customHostname,
-      customVerified: true,
-      verify: result.verify,
     },
     200,
     request,

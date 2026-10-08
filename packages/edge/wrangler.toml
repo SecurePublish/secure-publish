@@ -11,23 +11,36 @@ binding = "PANELS"
 id = "46d61ee3d1f7410fa081e383b776934a"
 preview_id = "46d61ee3d1f7410fa081e383b776934a"
 
-# ─── Custom domains / routes — wildcard LIVE (2026-10-02) ───
-# Dashboard attached: *.securepublish.work/* → this Worker
-# Apex/www stay on Pages. Fallback: workers_dev = true
+# ─── Custom domains / routes ───
+# Dashboard: *.securepublish.work/* → this Worker. Fallback origin:
+# cname.securepublish.work (Cloudflare for SaaS). Apex/www stay on Pages
+# (no Worker route) — do not attach this Worker to the apex.
+# Production also uses zone route */* so every custom hostname hits this Worker.
 # See docs/DEPLOY-WILDCARD.md
 #
 # Route managed in dashboard (API token lacks workers routes write):
 # [[routes]]
 # pattern = "*.securepublish.work/*"
 # zone_name = "securepublish.work"
+# [[routes]]
+# pattern = "*/*"
+# zone_name = "securepublish.work"
+
+# Daily TXT recheck for custom hostnames that already have a Cloudflare id.
+[triggers]
+crons = ["0 4 * * *"]
 
 # ─── Console CORS (exact Pages origin(s), comma-separated) ───
 # app.securepublish.work + Pages + local pairing
 [vars]
 OAUTH_ALLOWED_DOMAINS = "wises.com.br"
 CONSOLE_ORIGIN = "https://app.securepublish.work,https://secure-publish-app.pages.dev,http://127.0.0.1:8765"
+CF_ZONE_ID = "397f24981bc11c467ae86b5ee71a43e1"
+# Off until QA/security sign-off. PUT/verify return 403 custom_domains_disabled.
+CUSTOM_DOMAINS_ENABLED = "false"
 
-# ─── SSO (prefer Cloudflare Access) — usually secrets, not vars ───
+# ─── Secrets (never commit) ───
+# wrangler secret put SESSION_SECRET GOOGLE_* GITHUB_* MICROSOFT_*
+# wrangler secret put CF_SAAS_TOKEN   # zone-scoped, SSL and Certificates: Edit
 # TEAM_DOMAIN / POLICY_AUD via dashboard or wrangler secret/var
-# Worker OAuth secrets: wrangler secret put SESSION_SECRET GOOGLE_* GITHUB_* MICROSOFT_*
 # Local only (NEVER production): SSO_DEV_BYPASS=1 in .dev.vars
