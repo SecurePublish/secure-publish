@@ -385,7 +385,7 @@ export function formatPublishedLabel(iso, timeZone = "America/Sao_Paulo") {
   }
 }
 
-/** Map view store → contract viewers[{email,first,last}] (time-of-day labels). */
+/** Map view store → contract viewers[{email,first,last,firstAt,lastAt}]. */
 export function viewsToApi(views, timeZone = "America/Sao_Paulo") {
   const byEmail = views?.byEmail || {};
   const viewers = Object.entries(byEmail)
@@ -393,6 +393,8 @@ export function viewsToApi(views, timeZone = "America/Sao_Paulo") {
       email,
       first: formatTimeLabel(v.first, timeZone),
       last: formatTimeLabel(v.last, timeZone),
+      firstAt: formatIsoUtc(v.first),
+      lastAt: formatIsoUtc(v.last),
     }))
     .sort((a, b) => String(a.email).localeCompare(String(b.email)));
   return {
@@ -414,6 +416,18 @@ function formatTimeLabel(iso, timeZone) {
     }).format(d);
   } catch {
     return "";
+  }
+}
+
+/** Stored ISO → UTC ISO 8601 (`2026-10-07T00:47:12.000Z`); empty/invalid → null. */
+function formatIsoUtc(iso) {
+  if (!iso) return null;
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString();
+  } catch {
+    return null;
   }
 }
 
