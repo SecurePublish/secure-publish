@@ -202,6 +202,8 @@ npx wrangler secret put OAUTH_ALLOWED_DOMAINS   # ex: empresa.com
 
 Não defina `TEAM_DOMAIN`/`POLICY_AUD` se quiser modo `oauth` puro (Access tem prioridade).
 
+**Known risk:** GitHub does not re-verify emails, so someone who left the company but keeps a verified @company email on GitHub can still sign in via GitHub even after their Google account is disabled. Accepted for now given the small audience; mitigation if needed later is requiring Google for company mode.
+
 
 ## Console API (Worker)
 
