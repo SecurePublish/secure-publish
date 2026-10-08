@@ -20,7 +20,7 @@ const GITHUB_NPX_RE = GITHUB_NPX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Bare `securepublish-cli <sub>` as a runnable line (not prose about the bin name). */
 const BARE_CLI_RUN =
-  /(?:^|\n)\s*(?:`)?securepublish-cli\s+(?:login|publish|logout|list|revoke|doctor|mock-serve|help)\b/;
+  /(?:^|\n)\s*(?:`)?securepublish-cli\s+(?:login|publish|logout|list|revoke|doctor|mock-serve|help|status)\b/;
 
 describe("root package exposes CLI for github npx", () => {
   it(`root package.json bin.${BIN_NAME} points at packages/cli`, () => {
@@ -52,6 +52,24 @@ describe("root package exposes CLI for github npx", () => {
     assert.doesNotMatch(r.stdout, /dangerousRegistries|Guardian/i);
     assert.doesNotMatch(r.stdout, /\bsp\b/);
     assert.doesNotMatch(r.stdout, /Usage:\s*secure-publish\b/);
+    assert.match(r.stdout, new RegExp(`${GITHUB_NPX_RE} login`));
+    assert.match(r.stdout, new RegExp(`${GITHUB_NPX_RE} publish`));
+    assert.match(r.stdout, new RegExp(`${GITHUB_NPX_RE} doctor`));
+    assert.doesNotMatch(
+      r.stdout,
+      BARE_CLI_RUN,
+      "help must print npx github: invocations, not bare securepublish-cli <sub>"
+    );
+  });
+
+  it("root package.json engines.npm is >=10 (matches node 20 / npm 10)", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+    assert.equal(pkg.engines?.node, ">=20");
+    assert.equal(pkg.engines?.npm, ">=10");
+    const cliPkg = JSON.parse(
+      fs.readFileSync(path.join(root, "packages/cli/package.json"), "utf8")
+    );
+    assert.equal(cliPkg.engines?.npm, ">=10");
   });
 });
 
@@ -126,7 +144,25 @@ describe("README documents github npx invocations", () => {
     assert.doesNotMatch(readme, /(?:^|\n)\s*secure-publish publish\b/);
     assert.doesNotMatch(readme, /(?:^|\n)\s*sp\s+publish\b/);
     // Warn against the public npm name; never instruct installing/running it
+    assert.match(readme, /npm i -g npm@10/);
+    assert.match(readme, /npm 9/);
+    assert.match(readme, /Requires \*\*Node 20\+\*\* and \*\*npm 10\+\*\*/);
+    assert.match(readme, /company_requires_work_domain/);
+    assert.match(readme, /reserved_slug/);
+    assert.match(readme, /error: <code>/);
     assert.match(readme, /Do \*\*not\*\*.*`npm install secure-publish`.*`npx secure-publish`/);
+    const npxSrc = fs.readFileSync(
+      path.join(root, "packages/cli/src/npx-cli.js"),
+      "utf8"
+    );
+    assert.match(npxSrc, new RegExp(`export const NPX_CLI = "${GITHUB_NPX_RE}"`));
+    const workerSrc = fs.readFileSync(
+      path.join(root, "packages/edge/src/worker.js"),
+      "utf8"
+    );
+    assert.match(workerSrc, /npxCmd\("publish /);
+    assert.doesNotMatch(workerSrc, /Publish: securepublish-cli /);
+
     const instructLines = readme
       .split("\n")
       .filter(

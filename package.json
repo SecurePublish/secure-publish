@@ -17,10 +17,11 @@
     "doctor": "node packages/cli/bin/securepublish-cli.js doctor",
     "list": "node packages/cli/bin/securepublish-cli.js list",
     "e2e:mock": "node scripts/e2e-mock.mjs",
-    "test:cli-bin": "node --test test/github-npx-bin.test.mjs"
+    "test:cli-bin": "node --test test/github-npx-bin.test.mjs test/cli-errors.test.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "npm": ">=10"
   },
   "license": "MIT"
 }

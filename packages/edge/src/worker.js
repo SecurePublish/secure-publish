@@ -16,6 +16,7 @@ import { requireSsoSession, handleAuthRoutes, ssoMode } from "./sso.js";
 import { checkPanelAccess, accessDeniedBody } from "./acl.js";
 import { handleApiRoutes } from "./api.js";
 import { decodeRecord, recordView, getTenant, PANEL_ID_RE } from "./kv.js";
+import { npxCmd } from "../../cli/src/npx-cli.js";
 
 async function resolvePanel(key, panels) {
   if (!key || typeof key !== "string") return { ok: false };
@@ -184,7 +185,7 @@ export default {
           "Console API: /api/me /api/panels /api/hosting/* (SSO required)",
           "OAuth: /auth/{google|microsoft|github} · /auth/logout",
           "Use /{panel-id} após login SSO.",
-          "Publish: securepublish-cli publish <file.html> [--to email,email]",
+          `Publish: ${npxCmd("publish <file.html> [--to email,email]")}`,
           "",
         ].join("\n"),
         {
