@@ -29,7 +29,7 @@ const PANEL_404_BODY = "Not found — invalid or unknown panel id.";
 function panelHeaders(extra = {}) {
   return {
     "referrer-policy": "no-referrer",
-    "x-robots-tag": "noindex",
+    "x-robots-tag": "noindex, nofollow",
     ...extra,
   };
 }

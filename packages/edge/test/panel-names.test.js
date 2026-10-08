@@ -116,7 +116,7 @@ function panelReq(path, { cookie, host = "wise.securepublish.work" } = {}) {
 
 function assertPanelPathHeaders(res) {
   assert.equal(res.headers.get("referrer-policy"), "no-referrer");
-  assert.equal(res.headers.get("x-robots-tag"), "noindex");
+  assert.equal(res.headers.get("x-robots-tag"), "noindex, nofollow");
 }
 
 describe("panel code generation", () => {
