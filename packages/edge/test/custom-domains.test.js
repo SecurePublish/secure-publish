@@ -502,6 +502,36 @@ describe("serving & routing", () => {
     assert.equal(spoof.headers.get("location"), `https://${HOST}/${PANEL_ID}`);
   });
 
+  it("10-char code paths including /{code}/{name} 301 to the custom host", async () => {
+    const code = "k7f3qx2abc";
+    const kv = memoryKv({
+      [code]: JSON.stringify(panelRecord()),
+      "host:sub:wise": "dev@localhost",
+      [`host:custom:${HOST}`]: "dev@localhost",
+      "tenant:user:dev@localhost": JSON.stringify({
+        email: "dev@localhost",
+        slug: "wise",
+        host: HOST,
+        customHostname: HOST,
+        customVerified: true,
+        customStatus: "active",
+      }),
+    });
+    const env = enabledEnv(kv);
+    for (const path of [`/${code}`, `/${code}/performance-out-26`]) {
+      const res = await worker.fetch(
+        new Request(`https://wise.securepublish.work${path}`, {
+          headers: { Host: "wise.securepublish.work" },
+          redirect: "manual",
+        }),
+        env
+      );
+      assert.equal(res.status, 301, path);
+      assert.equal(res.headers.get("location"), `https://${HOST}${path}`, path);
+      assert.equal(res.headers.get("cache-control"), "private, no-store", path);
+    }
+  });
+
   it("no 301 unless status active", async () => {
     const kv = kvWithSubAndPanel();
     await kv.put(`host:custom:${HOST}`, "dev@localhost");
@@ -746,7 +776,9 @@ describe("pending claims do not lock a hostname", () => {
         headers: {
           Origin: "https://app.securepublish.work",
           Cookie: cookie,
+          "content-type": "application/json",
         },
+        body: "{}",
       }),
       env
     );

@@ -22,7 +22,6 @@ import {
   lookupPanelId,
   panelPath,
   storedPanelName,
-  PANEL_ID_RE,
 } from "./kv.js";
 import {
   requestHost,
@@ -97,7 +96,8 @@ function isPanelPath(pathname) {
   const parts = String(pathname || "")
     .split("/")
     .filter(Boolean);
-  return parts.length >= 1 && PANEL_ID_RE.test(parts[0]);
+  // 10-char codes and legacy 24-hex, including /{code}/{name}.
+  return parts.length >= 1 && Boolean(lookupPanelId(parts[0]));
 }
 
 /**
