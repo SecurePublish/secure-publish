@@ -164,6 +164,7 @@ describe("normalizeEmailDomain / signup blocklist", () => {
   it("lowercases and trims a valid host; does not strip a trailing dot", () => {
     assert.equal(normalizeEmailDomain("  Ana@WISES.COM.BR "), "wises.com.br");
     assert.equal(normalizeEmailDomain("  Ana@WISES.COM.BR. "), "");
+    assert.equal(normalizeEmailDomain("dev@localhost"), "localhost");
   });
 
   it("denies domains containing # / ? \\ : and never URL-repairs them", () => {

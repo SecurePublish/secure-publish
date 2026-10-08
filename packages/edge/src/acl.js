@@ -50,9 +50,11 @@ function idnToPunycodeNoRepair(domain) {
 /**
  * Lowercase, trim, IDN→punycode, then exact ASCII host regex.
  * Invalid input returns "" — callers must deny; the string is never repaired.
+ * `localhost` is allowed only for SSO_DEV_BYPASS / local tests (not a TLD).
  */
 export function normalizeEmailDomain(emailOrDomain) {
   const ascii = idnToPunycodeNoRepair(rawEmailDomain(emailOrDomain));
+  if (ascii === "localhost") return ascii;
   if (!EMAIL_DOMAIN_RE.test(ascii)) return "";
   return ascii;
 }
