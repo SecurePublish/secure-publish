@@ -7,9 +7,11 @@
  * 3) CORS = exact CONSOLE_ORIGIN + credentials
  * 4) viewers[] PII only for the panel publisher (email === publisherEmail)
  * 5) Custom domain: claim + verify ownership before serving as host
+ * 6) /api/* only on the app host (OAUTH_CALLBACK_ORIGIN / APP_HOST)
+ * 7) Cookie mutations: exact console Origin + application/json
  */
 
-import { requireSsoSession, ssoMode } from "./sso.js";
+import { requireSsoSession, ssoMode, oauthCallbackOrigin, consoleOrigins } from "./sso.js";
 import { isPublicEmailDomain, normalizeDomains } from "./acl.js";
 import {
   getPanel,
@@ -43,13 +45,84 @@ import {
   revokePublishToken,
 } from "./kv.js";
 
-/** @returns {string[]} */
-export function consoleOrigins(env) {
-  const raw = env.CONSOLE_ORIGIN || env.CONSOLE_ORIGINS || "";
-  return String(raw)
-    .split(",")
-    .map((s) => s.trim().replace(/\/$/, ""))
-    .filter(Boolean);
+export { consoleOrigins };
+
+/**
+ * Hostname that may serve `/api/*`. APP_HOST if set, else the existing
+ * OAuth callback origin — no second hardcoded app host here.
+ */
+export function apiHost(env = {}) {
+  const raw = String(env.APP_HOST || "").trim();
+  if (raw) {
+    try {
+      return new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase();
+    } catch {
+      return raw.split("/")[0].split(":")[0].toLowerCase();
+    }
+  }
+  return new URL(oauthCallbackOrigin(env)).hostname.toLowerCase();
+}
+
+function requestHostname(request) {
+  const header = (request.headers.get("Host") || "").split(":")[0].toLowerCase();
+  if (header) return header;
+  try {
+    return new URL(request.url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function jsonMediaType(request) {
+  const raw = request.headers.get("content-type") || "";
+  return raw.split(";")[0].trim().toLowerCase() === "application/json";
+}
+
+const UNKNOWN_PATH_404 = "Not found — invalid or unknown panel id.";
+
+function unknownPath404() {
+  return new Response(UNKNOWN_PATH_404, {
+    status: 404,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "referrer-policy": "no-referrer",
+      "x-robots-tag": "noindex, nofollow",
+    },
+  });
+}
+
+/**
+ * Cookie-authenticated POST/PATCH/PUT/DELETE under /api/*.
+ * Bearer and unauthenticated device/code + device/token are exempt.
+ * device/bind is not.
+ */
+function cookieCsrfError(request, env, url) {
+  const method = request.method.toUpperCase();
+  if (!["POST", "PATCH", "PUT", "DELETE"].includes(method)) return null;
+  const auth = request.headers.get("authorization") || "";
+  if (/^Bearer\s+\S+/i.test(auth)) return null;
+  if (
+    method === "POST" &&
+    (url.pathname === "/api/device/code" || url.pathname === "/api/device/token")
+  ) {
+    return null;
+  }
+  if (!(request.headers.get("Cookie") || request.headers.get("cookie"))) return null;
+
+  const originHeader = request.headers.get("Origin") || "";
+  let origin = "";
+  try {
+    origin = new URL(originHeader).origin;
+  } catch {
+    origin = "";
+  }
+  if (!origin || !consoleOrigins(env).includes(origin)) {
+    return err("csrf_origin", 403, request, env);
+  }
+  if (!jsonMediaType(request)) {
+    return err("csrf_content_type", 403, request, env);
+  }
+  return null;
 }
 
 export function corsHeaders(request, env) {
@@ -62,8 +135,14 @@ export function corsHeaders(request, env) {
     "Access-Control-Allow-Credentials": "true",
     "Access-Control-Max-Age": "86400",
   };
-  if (origin && allowed.includes(origin)) {
-    headers["Access-Control-Allow-Origin"] = origin;
+  let requestOrigin = "";
+  try {
+    requestOrigin = origin ? new URL(origin).origin : "";
+  } catch {
+    requestOrigin = "";
+  }
+  if (requestOrigin && allowed.includes(requestOrigin)) {
+    headers["Access-Control-Allow-Origin"] = requestOrigin;
   }
   return headers;
 }
@@ -105,16 +184,27 @@ function viewFields(viewData, requesterEmail, publisherEmail) {
 export async function handleApiRoutes(request, env) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/")) return null;
+  // Any other Host (panel slug, apex, workers.dev) is an unknown path.
+  if (requestHostname(request) !== apiHost(env)) return unknownPath404();
 
   // Preflight — no session required, but origin must match allowlist.
   if (request.method === "OPTIONS") {
-    const origin = request.headers.get("Origin") || "";
+    const originHeader = request.headers.get("Origin") || "";
     const allowed = consoleOrigins(env);
-    if (origin && !allowed.includes(origin)) {
+    let origin = "";
+    try {
+      origin = originHeader ? new URL(originHeader).origin : "";
+    } catch {
+      origin = "";
+    }
+    if (originHeader && !allowed.includes(origin)) {
       return new Response(null, { status: 403 });
     }
     return new Response(null, { status: 204, headers: corsHeaders(request, env) });
   }
+
+  const csrf = cookieCsrfError(request, env, url);
+  if (csrf) return csrf;
 
   // Device login start/poll and publish-credential revoke do not use the
   // browser cookie. Panel routes still require the account owner.

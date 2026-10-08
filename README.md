@@ -222,7 +222,7 @@ Cameron contract: [`docs/API-CONTRACT.md`](docs/API-CONTRACT.md). Edge implement
 | PUT | `/api/hosting/subdomain` · `/api/hosting/custom` |
 | GET | `/auth/{google\|microsoft\|github}` |
 
-Auth: SSO session cookie / Access JWT. CORS: exact `CONSOLE_ORIGIN` + credentials. Custom domains are claimed but **not served** until ownership is verified. `GET /api/panels` `viewers[]` is publisher-only (omitted unless the session email is that panel’s `publisherEmail`); `views` and `path` are still returned.
+Auth: SSO session cookie / Access JWT. `/api/*` only on the app host (`app.securepublish.work`). CORS: exact `CONSOLE_ORIGIN` + credentials. Cookie mutations also require that Origin and `Content-Type: application/json` (`403 csrf_origin` / `csrf_content_type`); Bearer CLI calls are exempt. Custom domains are claimed but **not served** until ownership is verified. `GET /api/panels` `viewers[]` is publisher-only (omitted unless the session email is that panel’s `publisherEmail`); `views` and `path` are still returned.
 
 ```bash
 cd packages/edge && npm test && npx wrangler dev

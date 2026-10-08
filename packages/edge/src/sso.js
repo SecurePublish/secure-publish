@@ -134,12 +134,20 @@ export function selectGitHubEmail(emails, env = {}) {
   return (primary || verified[0]).email;
 }
 
-function consoleOrigins(env) {
+/** Exact origins from CONSOLE_ORIGIN via `new URL().origin` — no suffix matching. */
+export function consoleOrigins(env) {
   const raw = env.CONSOLE_ORIGIN || env.CONSOLE_ORIGINS || "";
-  return String(raw)
-    .split(",")
-    .map((s) => s.trim().replace(/\/$/, ""))
-    .filter(Boolean);
+  const out = [];
+  for (const part of String(raw).split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    try {
+      out.push(new URL(trimmed).origin);
+    } catch {
+      /* skip invalid */
+    }
+  }
+  return out;
 }
 
 /**
