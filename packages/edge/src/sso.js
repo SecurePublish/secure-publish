@@ -25,6 +25,9 @@ import {
 const COOKIE_NAME = "secure_publish_session";
 /** Host-only cookie on customer custom hostnames. `__Host-` forbids Domain=. */
 export const HOST_SESSION_COOKIE = "__Host-sp_session";
+/** Login-CSRF nonce on the customer host; hash-only is sent to `app.`. */
+export const HOST_HANDOFF_COOKIE = "__Host-sp_handoff";
+export const HANDOFF_COOKIE_MAX_AGE = 60;
 export const SESSION_TTL_SEC = 60 * 60 * 12; // 12h
 
 /** Single production OAuth callback host (Google allows one primary redirect URI). */
@@ -198,8 +201,11 @@ export async function requireSsoSession(request, env, opts = {}) {
   const host = requestHost(request);
 
   // Customer custom host: Domain=.securepublish.work is not sent here.
-  // Require a host-bound __Host-sp_session, else bounce to app handoff.
+  // Panel HTML needs a host-bound __Host-sp_session. API must never accept it.
   if (isCustomCustomerHost(host) && mode === "oauth") {
+    if (forApi) {
+      return { ok: false, status: 401, body: "unauthorized" };
+    }
     const bound = await readHostBoundSessionCookie(request, env.SESSION_SECRET);
     if (bound && bound.host === host) {
       if (env.OAUTH_ALLOWED_DOMAINS) {
@@ -211,23 +217,21 @@ export async function requireSsoSession(request, env, opts = {}) {
           return {
             ok: false,
             status: 403,
-            body: forApi
-              ? "domain_not_allowed"
-              : "Acesso negado: domínio de e-mail não autorizado.\n",
+            body: "Acesso negado: domínio de e-mail não autorizado.\n",
           };
         }
       }
       return { ok: true, user: { email: bound.email, provider: bound.provider } };
     }
-    if (forApi) {
-      return { ok: false, status: 401, body: "unauthorized" };
-    }
     const url = new URL(request.url);
     const ret = isSafeRelativeReturn(url.pathname) ? url.pathname : "/";
+    const nonce = mintHandoffNonce();
+    const nonceHash = await hashHandoffNonce(nonce);
     const dest = new URL("https://app.securepublish.work/auth/handoff");
     dest.searchParams.set("host", host);
     dest.searchParams.set("return", ret);
-    return { ok: false, redirectUrl: dest.toString() };
+    dest.searchParams.set("nh", nonceHash);
+    return { ok: false, redirectUrl: dest.toString(), handoffNonce: nonce };
   }
 
   // oauth
@@ -1045,6 +1049,64 @@ export async function mintHostBoundSessionCookie(payload, secret) {
 
 export function clearHostBoundSessionCookie() {
   return `${HOST_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+}
+
+function bytesToBase64Url(bytes) {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlToBytes(s) {
+  const raw = String(s || "");
+  const pad = raw.length % 4 === 0 ? "" : "=".repeat(4 - (raw.length % 4));
+  const b64 = raw.replace(/-/g, "+").replace(/_/g, "/") + pad;
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/** Random 32-byte nonce, base64url-encoded for the `__Host-sp_handoff` cookie. */
+export function mintHandoffNonce() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return bytesToBase64Url(bytes);
+}
+
+/** SHA-256 of the nonce bytes, base64url — the only value sent to `app.`. */
+export async function hashHandoffNonce(nonce) {
+  const bytes = base64UrlToBytes(nonce);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return bytesToBase64Url(new Uint8Array(digest));
+}
+
+export function mintHandoffCookie(nonce) {
+  return `${HOST_HANDOFF_COOKIE}=${nonce}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${HANDOFF_COOKIE_MAX_AGE}`;
+}
+
+export function clearHandoffCookie() {
+  return `${HOST_HANDOFF_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+}
+
+export function readHandoffNonce(request) {
+  const values = sessionCookieValues(
+    request.headers.get("cookie") || "",
+    HOST_HANDOFF_COOKIE
+  );
+  return values[0] || "";
+}
+
+export async function handoffNonceMatches(cookieNonce, storedHash) {
+  if (!cookieNonce || !storedHash) return false;
+  let got;
+  try {
+    got = await hashHandoffNonce(cookieNonce);
+  } catch {
+    return false;
+  }
+  if (got.length !== storedHash.length) return false;
+  return timingSafeEqual(got, storedHash);
 }
 
 function clearSessionCookie(env = {}, requestUrl = "") {

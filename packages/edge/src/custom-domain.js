@@ -1,7 +1,9 @@
 /**
  * Customer custom domains (Cloudflare for SaaS Custom Hostnames).
  *
- * Claim locks KV only — no Cloudflare call.
+ * Pending claims do not lock a hostname: each account may hold its own claim
+ * and TXT token. The exclusive KV lock `host:custom:{h}` is written only when
+ * an account reaches `active` (kept through `records_missing`, no TTL).
  * Verify / daily cron share syncCustomHostname() so TXT loss is applied the
  * same way from POST /api/hosting/custom/verify and the scheduled handler.
  */
@@ -65,6 +67,20 @@ function lookupFn(env, opts) {
   return (name) => lookupTxt(name, fetchFn);
 }
 
+function hostnameTaken(lock, owner) {
+  return Boolean(lock && lock !== owner);
+}
+
+function takenResponse(hostname, records) {
+  return {
+    ok: false,
+    statusCode: 409,
+    error: "hostname_taken",
+    records,
+    customHostname: hostname,
+  };
+}
+
 /**
  * ONE shared TXT-recheck + CF status function.
  * Both the daily cron and POST /api/hosting/custom/verify call this.
@@ -120,6 +136,12 @@ export async function syncCustomHostname(env, tenant, opts = {}) {
   }
 
   const txtOk = Boolean(expected) && matches(dnsResult.records || [], expected);
+  const owner = ownerEmail(tenant.email);
+  const lockKey = `host:custom:${hostname}`;
+  const lock = await kv.get(lockKey);
+  if (hostnameTaken(lock, owner)) {
+    return takenResponse(hostname, records);
+  }
 
   if (!txtOk) {
     const failed = await applyTxtFailure(kv, tenant);
@@ -134,6 +156,11 @@ export async function syncCustomHostname(env, tenant, opts = {}) {
 
   let cfId = tenant.customCfId || null;
   if (!cfId && opts.createCfIfMissing) {
+    // Re-read immediately before the Cloudflare create (check-then-write).
+    const lockBeforeCreate = await kv.get(lockKey);
+    if (hostnameTaken(lockBeforeCreate, owner)) {
+      return takenResponse(hostname, records);
+    }
     const created = await createCustomHostname(env, hostname, fetchFn);
     if (!created.ok) {
       return {
@@ -177,6 +204,15 @@ export async function syncCustomHostname(env, tenant, opts = {}) {
 
   const status = mapCfHostnameStatus(got.result);
   const active = status === "active";
+  if (active) {
+    const lockNow = await kv.get(lockKey);
+    if (hostnameTaken(lockNow, owner)) {
+      return takenResponse(hostname, records);
+    }
+    if (!lockNow) {
+      await kv.put(lockKey, owner);
+    }
+  }
   const updated = await putTenant(kv, {
     ...tenant,
     customCfId: cfId,
@@ -197,9 +233,10 @@ export async function syncCustomHostname(env, tenant, opts = {}) {
 }
 
 /**
- * Reserve custom hostname. No Cloudflare call.
- * A new claim replaces the account's previous custom hostname (release lock;
- * delete its CF hostname if one exists).
+ * Reserve a pending custom hostname for this account. No Cloudflare call and
+ * no exclusive lock — another account may claim the same host until someone
+ * reaches `active`. A new claim replaces this account's previous hostname
+ * (delete its CF hostname if one exists; drop the lock only if we own it).
  */
 export async function claimCustomHostname(env, hostnameInput, email) {
   if (!customDomainsEnabled(env)) {
@@ -218,7 +255,7 @@ export async function claimCustomHostname(env, hostnameInput, email) {
 
   const lockKey = `host:custom:${h}`;
   const existing = await kv.get(lockKey);
-  if (existing && existing !== owner) {
+  if (hostnameTaken(existing, owner)) {
     return { ok: false, status: 409, error: "hostname_taken" };
   }
 
@@ -234,10 +271,12 @@ export async function claimCustomHostname(env, hostnameInput, email) {
         return { ok: false, status: 502, error: "cloudflare_error" };
       }
     }
-    await kv.delete(`host:custom:${prevHost}`);
+    const prevLock = await kv.get(`host:custom:${prevHost}`);
+    if (prevLock === owner) {
+      await kv.delete(`host:custom:${prevHost}`);
+    }
   }
 
-  await kv.put(lockKey, owner);
   const sameHost = prevHost === h;
   const token =
     sameHost && prev?.customVerifyToken
@@ -280,16 +319,20 @@ export async function deleteCustomHostnameClaim(env, email) {
   const n = normalizeCustomHostname(String(tenant.customHostname));
   const h = n.ok ? n.hostname : String(tenant.customHostname).trim().toLowerCase();
   const lock = await kv.get(`host:custom:${h}`);
-  if (lock && lock !== owner) {
-    return { ok: false, status: 403, error: "hostname_taken" };
-  }
-  if (tenant.customCfId) {
+  if (lock === owner) {
+    if (tenant.customCfId) {
+      const del = await deleteCustomHostname(env, tenant.customCfId);
+      if (!del.ok) {
+        return { ok: false, status: 502, error: "cloudflare_error" };
+      }
+    }
+    await kv.delete(`host:custom:${h}`);
+  } else if (!lock && tenant.customCfId) {
     const del = await deleteCustomHostname(env, tenant.customCfId);
     if (!del.ok) {
       return { ok: false, status: 502, error: "cloudflare_error" };
     }
   }
-  await kv.delete(`host:custom:${h}`);
   await putTenant(kv, {
     ...tenant,
     email: owner,
@@ -319,8 +362,14 @@ export async function verifyCustomHostname(env, email, opts = {}) {
   const n = normalizeCustomHostname(String(tenant.customHostname));
   const h = n.ok ? n.hostname : "";
   const lock = await env.PANELS.get(`host:custom:${h}`);
-  if (lock && lock !== owner) {
-    return { ok: false, statusCode: 403, error: "hostname_taken" };
+  if (hostnameTaken(lock, owner)) {
+    return {
+      ok: false,
+      statusCode: 409,
+      error: "hostname_taken",
+      records: customDnsRecords(h, tenant.customVerifyToken),
+      customHostname: h,
+    };
   }
   return syncCustomHostname(env, tenant, { createCfIfMissing: true, ...opts });
 }

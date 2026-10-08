@@ -13,11 +13,11 @@ Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)
 | GET | `/api/panels?scope=mine\|company` | `{ host, panels: [{ id, title, … }] }` — SSO; `title` fallback `"untitled"`; `views` for every listed panel; **`viewers[]` publisher-only** (omitted unless session email === `publisherEmail`) |
 | PATCH | `/api/panels/:id/access` | `{ mode, allowlist[], sendInvite? }` — **publisher only** |
 | PUT | `/api/hosting/subdomain` | `{ slug }` → `{ host }`. `400 reserved_slug` for product/infra names |
-| PUT | `/api/hosting/custom` | `{ hostname }` → claim (KV lock only, no Cloudflare call). Flag off → `403 custom_domains_disabled`. Relative DNS `records`. |
+| PUT | `/api/hosting/custom` | `{ hostname }` → pending claim (per-account TXT token, **no** exclusive lock, no Cloudflare call). Flag off → `403 custom_domains_disabled`. Relative DNS `records`. Host already `active`/`records_missing` for another account → `409 hostname_taken`. |
 | DELETE | `/api/hosting/custom` | owner only: delete CF custom hostname (if any) + KV lock + claim fields |
 | POST | `/api/hosting/custom/verify` | DoH TXT then Cloudflare for SaaS create/status. `200 { status, records, customHostname }`. Same TXT-recheck as the daily cron. |
-| GET | `/auth/handoff` | App host: mint one-time handoff code for an **active** custom hostname |
-| GET | `/_auth/handoff` | Customer host: consume code, set `__Host-sp_session`, 302 to `return` |
+| GET | `/auth/handoff` | `app.securepublish.work` only: mint one-time host-bound code (stores SHA-256 of `__Host-sp_handoff` nonce). Elsewhere → identical panel 404. |
+| GET | `/_auth/handoff` | Verified customer host only: cookie hash + Host must match; set `__Host-sp_session`, clear handoff cookie, 302. Failure → 403 (HTML if `Accept` includes `text/html`). Elsewhere → identical panel 404. |
 | GET | `/auth/providers` | `{ providers }` — configured IdPs (client id+secret); public, CORS+credentials |
 | GET | `/auth/{google\|microsoft\|github}` | OAuth start (`?next=` → return); callback pinned to `app.securepublish.work` |
 | GET\|POST | `/auth/logout` | Custom host: clear `__Host-sp_session` then app `/auth/logout`. Zone hosts: clear `secure_publish_session` → 302 first `CONSOLE_ORIGIN` + `/signup/` |
@@ -52,8 +52,8 @@ GitHub OAuth uses `/user/emails` (`user:email` scope) only — never the public 
 | `idx:domain:{domain}` | `string[]` panel ids |
 | `view:{id}` | `{ count, byEmail: { email: { first, last } } }` |
 | `tenant:user:{email}` | hosting prefs (`customHostname`, `customVerified`, `customStatus`, `customVerifyToken`, `customCfId`) |
-| `host:sub:{slug}` / `host:custom:{hostname}` | owner email lock |
-| `handoff:{code}` | one-time custom-host session code (TTL 60s) |
+| `host:sub:{slug}` / `host:custom:{hostname}` | owner email lock (`host:custom` written only at `active`, kept through `records_missing`, no TTL) |
+| `handoff:{code}` | one-time custom-host session code (TTL 60s, hostname + nonce hash) |
 
 CLI publish should set `publisherEmail` + indexes (see `packages/cli`). Legacy bare records still serve HTML; console list falls back to KV scan.
 
@@ -89,7 +89,7 @@ npx wrangler deploy
 
 `CF_SAAS_TOKEN` must never be logged or returned. Fallback origin `cname.securepublish.work` is the Custom Hostnames target. Zone route `*/*` sends every host (including customer CNAMEs) to this Worker; apex `securepublish.work` and `www` stay on Pages.
 
-KV `handoff:{code}` is read then deleted; that is **not strictly atomic** (60s TTL, hostname-bound). Pages never set session cookies — only this Worker.
+KV `handoff:{code}` is read then deleted; that is **not strictly atomic** (60s TTL, hostname-bound, CSRF-bound to a SHA-256 of `__Host-sp_handoff`). Pages never set session cookies — only this Worker. `/api/*` is not served on customer hosts; `__Host-sp_session` is never accepted for `api: true` SSO.
 
 Customer DNS (names relative to their registrable domain):
 

@@ -12,9 +12,9 @@
  * Console API: see ../README.md and secure-publish-app/API-CONTRACT.md
  */
 
-import { requireSsoSession, handleAuthRoutes, ssoMode } from "./sso.js";
+import { requireSsoSession, handleAuthRoutes, ssoMode, mintHandoffCookie } from "./sso.js";
 import { checkPanelAccess, accessDeniedBody } from "./acl.js";
-import { handleApiRoutes } from "./api.js";
+import { handleApiRoutes, apiHost } from "./api.js";
 import {
   decodeRecord,
   recordView,
@@ -33,6 +33,7 @@ import {
 import {
   recheckAllCustomHostnames,
   tenantIsActiveCustom,
+  isActiveCustomHostname,
 } from "./custom-domain.js";
 import { handleAppHandoff, handleCustomerHandoff } from "./handoff.js";
 
@@ -220,11 +221,19 @@ export default {
     const pagesProxy = await proxyReservedHost(request, url);
     if (pagesProxy) return pagesProxy;
 
+    const host = requestHost(request);
+
     if (url.pathname === "/auth/handoff" || url.pathname === "/auth/handoff/") {
-      return handleAppHandoff(request, env);
+      if (host === apiHost(env)) {
+        return handleAppHandoff(request, env);
+      }
+      return unknownPanelResponse();
     }
     if (url.pathname === "/_auth/handoff" || url.pathname === "/_auth/handoff/") {
-      return handleCustomerHandoff(request, env);
+      if (await isActiveCustomHostname(env, host)) {
+        return handleCustomerHandoff(request, env);
+      }
+      return unknownPanelResponse();
     }
 
     const authRes = await handleAuthRoutes(request, env);
@@ -286,12 +295,17 @@ export default {
     const sso = await requireSsoSession(request, env);
     if (!sso.ok) {
       if (sso.redirectUrl) {
-        return new Response(null, {
-          status: 302,
-          headers: panelHeaders({
+        const headers = new Headers(
+          panelHeaders({
             location: new URL(sso.redirectUrl, url.origin).toString(),
-          }),
-        });
+            "cache-control": "no-store",
+            "referrer-policy": "no-referrer",
+          })
+        );
+        if (sso.handoffNonce) {
+          headers.append("set-cookie", mintHandoffCookie(sso.handoffNonce));
+        }
+        return new Response(null, { status: 302, headers });
       }
       return new Response(sso.body || "Unauthorized — SSO required.\n", {
         status: sso.status || 403,

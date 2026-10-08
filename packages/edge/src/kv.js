@@ -15,7 +15,7 @@
  *   tenant:user:{email}       → { email, domain, host, slug?, customHostname?, customVerified?,
  *                                 customVerifyToken?, customStatus?, customCfId?, updatedAt }
  *   host:sub:{slug}           → email (owner lock)
- *   host:custom:{hostname}    → email (owner lock)
+ *   host:custom:{hostname}    → email (exclusive lock at active / records_missing; not at claim)
  *
  * PanelRecord v1+:
  *   { v, title?, name?, publishedAt, publisherEmail?, access: { mode, emails?, domains? }, html }

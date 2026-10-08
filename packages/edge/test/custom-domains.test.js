@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import worker from "../src/worker.js";
 import { UNKNOWN_PANEL_BODY } from "../src/worker.js";
 import { syncCustomHostname, recheckAllCustomHostnames } from "../src/custom-domain.js";
+import { mintSessionCookie } from "../src/sso.js";
 import {
   memoryKv,
   PANEL_ID,
@@ -10,6 +11,7 @@ import {
   CF_SAAS_TOKEN,
   panelRecord,
   enabledEnv,
+  oauthEnv,
   installCfFetchMock,
   tenantSnapshot,
 } from "./helpers.js";
@@ -147,7 +149,7 @@ describe("PUT /api/hosting/custom — validation before KV/CF", () => {
     assert.equal(body.records[1].type, "TXT");
     assert.equal(body.records[1].name, "_secure-publish.dashboards");
     assert.match(body.records[1].value, /^sp-verify=[0-9a-f]{64}$/);
-    assert.equal(await kv.get("host:custom:dashboards.example.com"), "dev@localhost");
+    assert.equal(await kv.get("host:custom:dashboards.example.com"), null);
     assert.equal(
       mock.calls.filter((c) => c.url.includes("api.cloudflare.com")).length,
       0
@@ -168,7 +170,7 @@ describe("PUT /api/hosting/custom — validation before KV/CF", () => {
     assert.equal((await res.json()).error, "hostname_taken");
   });
 
-  it("new claim replaces previous pending lock and deletes its CF hostname", async () => {
+  it("new claim replaces previous pending hostname and deletes its CF hostname without locking the new host", async () => {
     mock = installCfFetchMock();
     const kv = kvWithSubAndPanel();
     await kv.put("host:custom:old.example.com", "dev@localhost");
@@ -189,7 +191,7 @@ describe("PUT /api/hosting/custom — validation before KV/CF", () => {
     const res = await putCustom(env, "share.wises.com.br");
     assert.equal(res.status, 200);
     assert.equal(await kv.get("host:custom:old.example.com"), null);
-    assert.equal(await kv.get("host:custom:share.wises.com.br"), "dev@localhost");
+    assert.equal(await kv.get("host:custom:share.wises.com.br"), null);
     const del = mock.calls.find(
       (c) => c.method === "DELETE" && c.url.includes("cf-old")
     );
@@ -273,6 +275,7 @@ describe("POST /api/hosting/custom/verify", () => {
     const tenant = JSON.parse(await kv.get("tenant:user:dev@localhost"));
     assert.equal(tenant.customVerified, false);
     assert.equal(tenant.host, "wise.securepublish.work");
+    assert.equal(await kv.get(`host:custom:${HOST}`), null);
   });
 
   it("both active + TXT ok → active, serving host switches, token kept", async () => {
@@ -290,6 +293,10 @@ describe("POST /api/hosting/custom/verify", () => {
     assert.equal(tenant.host, HOST);
     assert.ok(tenant.customVerifyToken);
     assert.ok(tenant.customCfId);
+    assert.equal(await kv.get(`host:custom:${HOST}`), "dev@localhost");
+    const lockPuts = kv._puts.filter((p) => p.key === `host:custom:${HOST}`);
+    assert.ok(lockPuts.length);
+    assert.equal(lockPuts.at(-1).options.expirationTtl, undefined);
   });
 
   it("CF API error → 502 cloudflare_error, never fake success, token not in body", async () => {
@@ -679,3 +686,146 @@ describe("TXT recheck — verify and cron share one function", () => {
     assert.equal(out.status, "records_missing");
   });
 });
+
+describe("pending claims do not lock a hostname", () => {
+  let mock;
+  afterEach(() => mock?.restore());
+
+  const ALICE = "alice@wises.com.br";
+  const BOB = "bob@wises.com.br";
+
+  function twoAccountKv() {
+    return memoryKv({
+      [PANEL_ID]: JSON.stringify(
+        panelRecord(ALICE, { access: { mode: "company", domains: ["wises.com.br"] } })
+      ),
+      "host:sub:alice": ALICE,
+      "host:sub:bob": BOB,
+      [`tenant:user:${ALICE}`]: JSON.stringify({
+        email: ALICE,
+        slug: "alice",
+        host: "alice.securepublish.work",
+      }),
+      [`tenant:user:${BOB}`]: JSON.stringify({
+        email: BOB,
+        slug: "bob",
+        host: "bob.securepublish.work",
+      }),
+    });
+  }
+
+  async function cookieFor(env, email) {
+    const setCookie = await mintSessionCookie(
+      { email, provider: "google", exp: Math.floor(Date.now() / 1000) + 3600 },
+      env.SESSION_SECRET,
+      env,
+      "https://app.securepublish.work/_auth/callback/google"
+    );
+    return setCookie.split(";")[0];
+  }
+
+  function claimAs(env, cookie, hostname = HOST) {
+    return worker.fetch(
+      new Request("https://app.securepublish.work/api/hosting/custom", {
+        method: "PUT",
+        headers: {
+          Origin: "https://app.securepublish.work",
+          "content-type": "application/json",
+          Cookie: cookie,
+        },
+        body: JSON.stringify({ hostname }),
+      }),
+      env
+    );
+  }
+
+  function verifyAs(env, cookie) {
+    return worker.fetch(
+      new Request("https://app.securepublish.work/api/hosting/custom/verify", {
+        method: "POST",
+        headers: {
+          Origin: "https://app.securepublish.work",
+          Cookie: cookie,
+        },
+      }),
+      env
+    );
+  }
+
+  it("(a) A claims and disappears; B claims the same host, verifies with B's token, reaches active", async () => {
+    mock = installCfFetchMock();
+    const kv = twoAccountKv();
+    const env = oauthEnv(kv);
+    const aliceCookie = await cookieFor(env, ALICE);
+    const bobCookie = await cookieFor(env, BOB);
+
+    const aClaim = await claimAs(env, aliceCookie);
+    assert.equal(aClaim.status, 200);
+    await aClaim.json();
+    assert.equal(await kv.get(`host:custom:${HOST}`), null);
+    const aliceTenant = JSON.parse(await kv.get(`tenant:user:${ALICE}`));
+    assert.equal(aliceTenant.customHostname, HOST);
+    assert.ok(aliceTenant.customVerifyToken);
+
+    const bClaim = await claimAs(env, bobCookie);
+    assert.equal(bClaim.status, 200);
+    const bBody = await bClaim.json();
+    const bToken = bBody.records[1].value;
+    assert.equal(await kv.get(`host:custom:${HOST}`), null);
+    const bobTenant = JSON.parse(await kv.get(`tenant:user:${BOB}`));
+    assert.notEqual(bobTenant.customVerifyToken, aliceTenant.customVerifyToken);
+
+    mock.restore();
+    mock = installCfFetchMock({ txtRecords: [bToken] });
+    const bVerify = await verifyAs(env, bobCookie);
+    assert.equal(bVerify.status, 200);
+    assert.equal((await bVerify.json()).status, "active");
+    assert.equal(await kv.get(`host:custom:${HOST}`), BOB);
+    const bobAfter = JSON.parse(await kv.get(`tenant:user:${BOB}`));
+    assert.equal(bobAfter.customStatus, "active");
+    assert.equal(bobAfter.customVerified, true);
+  });
+
+  it("(b) after B is active, A's verify is hostname_taken with no CF create and lock unchanged", async () => {
+    mock = installCfFetchMock();
+    const kv = twoAccountKv();
+    const env = oauthEnv(kv);
+    const aliceCookie = await cookieFor(env, ALICE);
+    const bobCookie = await cookieFor(env, BOB);
+
+    await (await claimAs(env, aliceCookie)).json();
+    const bClaim = await claimAs(env, bobCookie);
+    const bToken = (await bClaim.json()).records[1].value;
+    mock.restore();
+    mock = installCfFetchMock({ txtRecords: [bToken] });
+    assert.equal((await verifyAs(env, bobCookie)).status, 200);
+    assert.equal(await kv.get(`host:custom:${HOST}`), BOB);
+
+    const cfBefore = mock.calls.filter(
+      (c) => c.method === "POST" && c.url.includes("custom_hostnames")
+    ).length;
+
+    const aVerify = await verifyAs(env, aliceCookie);
+    assert.equal(aVerify.status, 409);
+    assert.equal((await aVerify.json()).error, "hostname_taken");
+    assert.equal(await kv.get(`host:custom:${HOST}`), BOB);
+    const cfAfter = mock.calls.filter(
+      (c) => c.method === "POST" && c.url.includes("custom_hostnames")
+    ).length;
+    assert.equal(cfAfter, cfBefore);
+  });
+
+  it("(c) claim PUT for a host already locked by another account gives hostname_taken", async () => {
+    const kv = twoAccountKv();
+    await kv.put(`host:custom:${HOST}`, BOB);
+    const env = oauthEnv(kv);
+    const aliceCookie = await cookieFor(env, ALICE);
+    const res = await claimAs(env, aliceCookie);
+    assert.equal(res.status, 409);
+    assert.equal((await res.json()).error, "hostname_taken");
+    assert.equal(await kv.get(`host:custom:${HOST}`), BOB);
+    const aliceTenant = JSON.parse(await kv.get(`tenant:user:${ALICE}`));
+    assert.notEqual(aliceTenant.customHostname, HOST);
+  });
+});
+
