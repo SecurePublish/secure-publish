@@ -670,12 +670,16 @@ async function oauthCallback(request, env, provider) {
     return new Response("Token OAuth ausente.\n", { status: 502 });
   }
 
-  const email = await fetchUserEmail(provider, cfg, accessToken, env);
+  const email = String((await fetchUserEmail(provider, cfg, accessToken, env)) || "")
+    .trim()
+    .toLowerCase();
   if (!email) {
+    if (provider === "github") return githubLoginDeniedResponse();
     return new Response("Não foi possível obter e-mail do provedor.\n", { status: 502 });
   }
 
   if (oauthEmailDeniedByDomainGate(email, env)) {
+    if (provider === "github") return githubLoginDeniedResponse();
     return new Response("Acesso negado: domínio de e-mail não autorizado.\n", {
       status: 403,
     });
@@ -748,30 +752,34 @@ function deviceDonePage(ok) {
   });
 }
 
+const GITHUB_LOGIN_DENIED_BODY =
+  "Não conseguimos entrar com essa conta do GitHub. Ela precisa ter o e-mail da empresa confirmado no GitHub. Confira em github.com/settings/emails ou entre com outra conta.\n" +
+  "We couldn't sign you in with this GitHub account. It needs your company email confirmed on GitHub. Check github.com/settings/emails or sign in with another account.\n";
+
+function githubLoginDeniedResponse() {
+  return new Response(GITHUB_LOGIN_DENIED_BODY, {
+    status: 403,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+}
+
 async function fetchUserEmail(provider, cfg, accessToken, env = {}) {
   if (provider === "github") {
-    const emailsRes = await fetch(cfg.emailUrl, {
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        accept: "application/vnd.github+json",
-        "user-agent": "secure-publish",
-      },
-    });
-    if (emailsRes.ok) {
+    // Email must come only from /user/emails with verified: true. Never /user.
+    try {
+      const emailsRes = await fetch(cfg.emailUrl, {
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          accept: "application/vnd.github+json",
+          "user-agent": "secure-publish",
+        },
+      });
+      if (!emailsRes.ok) return null;
       const emails = await emailsRes.json();
-      const selected = selectGitHubEmail(emails, env);
-      if (selected) return selected;
+      return selectGitHubEmail(emails, env);
+    } catch {
+      return null;
     }
-    const userRes = await fetch(cfg.userUrl, {
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        accept: "application/vnd.github+json",
-        "user-agent": "secure-publish",
-      },
-    });
-    if (!userRes.ok) return null;
-    const user = await userRes.json();
-    return user.email || null;
   }
 
   if (provider === "microsoft") {

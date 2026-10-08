@@ -33,7 +33,7 @@ Lock A: `mode=company` = email **domain** after SSO (not Workspace/Entra/GitHub 
 
 ### SSO
 
-GitHub OAuth uses `/user/emails` (`user:email` scope): only `verified: true` addresses; the first whose domain is an exact (case-insensitive) member of `OAUTH_ALLOWED_DOMAINS` is chosen; otherwise the primary verified email. `users.noreply.github.com` (and subdomains) never count as an allowed match.
+GitHub OAuth uses `/user/emails` (`user:email` scope) only — never the public `/user` email. Only `verified: true` addresses; the first whose domain is an exact (case-insensitive) member of `OAUTH_ALLOWED_DOMAINS` is chosen; otherwise the primary verified email. If `/user/emails` errors or has no verified entry, login is denied (403, no session). `users.noreply.github.com` (and subdomains) never count as an allowed match. Session emails are stored lowercase for every IdP.
 
 **Known risk:** GitHub does not re-verify emails, so someone who left the company but keeps a verified @company email on GitHub can still sign in via GitHub even after their Google account is disabled. Accepted for now given the small audience; mitigation if needed later is requiring Google for company mode.
 

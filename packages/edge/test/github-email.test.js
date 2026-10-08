@@ -8,17 +8,25 @@ import {
   handleAuthRoutes,
   selectGitHubEmail,
   readSessionCookie,
+  COOKIE_NAME,
 } from "../src/sso.js";
 
 const APP = "https://app.securepublish.work";
 const SECRET = "test-session-secret-at-least-32-chars!!";
-const DENIED = "Acesso negado: domínio de e-mail não autorizado.";
+const GOOGLE_MS_DENIED = "Acesso negado: domínio de e-mail não autorizado.\n";
+const GITHUB_DENIED =
+  "Não conseguimos entrar com essa conta do GitHub. Ela precisa ter o e-mail da empresa confirmado no GitHub. Confira em github.com/settings/emails ou entre com outra conta.\n" +
+  "We couldn't sign you in with this GitHub account. It needs your company email confirmed on GitHub. Check github.com/settings/emails or sign in with another account.\n";
 
 function env(extra = {}) {
   return {
     SESSION_SECRET: SECRET,
     GITHUB_CLIENT_ID: "gh-id",
     GITHUB_CLIENT_SECRET: "gh-secret",
+    GOOGLE_CLIENT_ID: "gid",
+    GOOGLE_CLIENT_SECRET: "gsecret",
+    MICROSOFT_CLIENT_ID: "ms-id",
+    MICROSOFT_CLIENT_SECRET: "ms-secret",
     CONSOLE_ORIGIN: APP,
     OAUTH_ALLOWED_DOMAINS: "wises.com.br",
     ...extra,
@@ -188,12 +196,18 @@ describe("GitHub OAuth start scope", () => {
 
 describe("GitHub OAuth callback uses selected email", () => {
   const origFetch = globalThis.fetch;
+  const fetchCalls = { user: 0 };
 
   after(() => {
     globalThis.fetch = origFetch;
   });
 
-  function mockGithub({ emails: emailList, userEmail = "ana@gmail.com" }) {
+  function mockGithub({
+    emails: emailList,
+    emailsStatus = 200,
+    userEmail = "ana@wises.com.br",
+  }) {
+    fetchCalls.user = 0;
     globalThis.fetch = async (url) => {
       const u = String(url);
       if (u.includes("/login/oauth/access_token")) {
@@ -203,12 +217,16 @@ describe("GitHub OAuth callback uses selected email", () => {
         });
       }
       if (u.includes("/user/emails")) {
+        if (emailsStatus !== 200) {
+          return new Response("upstream error", { status: emailsStatus });
+        }
         return new Response(JSON.stringify(emailList), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
       }
-      if (u.endsWith("/user") || u.includes("/user?")) {
+      if (/\/user\/?$/.test(new URL(u).pathname)) {
+        fetchCalls.user += 1;
         return new Response(JSON.stringify({ email: userEmail }), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -218,26 +236,65 @@ describe("GitHub OAuth callback uses selected email", () => {
     };
   }
 
-  async function callback(testEnv) {
-    const state = encodeState({ returnTo: "/", provider: "github", n: "n1" });
+  function mockIdp({ tokenUrlPart, userUrlPart, profile }) {
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes(tokenUrlPart)) {
+        return new Response(JSON.stringify({ access_token: "tok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (u.includes(userUrlPart)) {
+        return new Response(JSON.stringify(profile), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected fetch ${u}`);
+    };
+  }
+
+  async function callback(provider, testEnv) {
+    const state = encodeState({ returnTo: "/", provider, n: "n1" });
     return handleAuthRoutes(
-      new Request(`${APP}/_auth/callback/github?code=abc&state=${state}`, {
+      new Request(`${APP}/_auth/callback/${provider}?code=abc&state=${state}`, {
         redirect: "manual",
       }),
       testEnv
     );
   }
 
+  function setCookieLines(res) {
+    if (typeof res.headers.getSetCookie === "function") return res.headers.getSetCookie();
+    const raw = res.headers.get("set-cookie");
+    return raw ? [raw] : [];
+  }
+
+  function sessionCookieLines(res) {
+    return setCookieLines(res).filter((c) => {
+      const pair = String(c).split(";")[0];
+      const eq = pair.indexOf("=");
+      if (eq < 0) return false;
+      const name = pair.slice(0, eq).trim();
+      const value = pair.slice(eq + 1).trim();
+      return name === COOKIE_NAME && value.length > 0;
+    });
+  }
+
   async function sessionEmail(res, testEnv) {
-    const parts = [];
-    if (typeof res.headers.getSetCookie === "function") {
-      for (const c of res.headers.getSetCookie()) parts.push(c.split(";")[0]);
-    } else {
-      parts.push(String(res.headers.get("set-cookie") || "").split(";")[0]);
-    }
+    const parts = setCookieLines(res).map((c) => c.split(";")[0]);
     const req = new Request(APP + "/", { headers: { cookie: parts.join("; ") } });
     const session = await readSessionCookie(req, testEnv.SESSION_SECRET);
     return session?.email;
+  }
+
+  async function assertGithubDenied(res) {
+    assert.equal(res.status, 403);
+    assert.equal(res.headers.get("content-type"), "text/plain; charset=utf-8");
+    assert.equal(await res.text(), GITHUB_DENIED);
+    assert.equal(sessionCookieLines(res).length, 0);
+    assert.equal(fetchCalls.user, 0);
   }
 
   it("mints a session with the verified work email when primary is gmail", async () => {
@@ -248,7 +305,41 @@ describe("GitHub OAuth callback uses selected email", () => {
         { email: "ana@wises.com.br", verified: true },
       ]),
     });
-    const res = await callback(testEnv);
+    const res = await callback("github", testEnv);
+    assert.equal(res.status, 302);
+    assert.equal(await sessionEmail(res, testEnv), "ana@wises.com.br");
+  });
+
+  it("lowercases a verified GitHub email before minting the session", async () => {
+    const testEnv = env();
+    mockGithub({
+      emails: emails([{ email: "ana@WISES.COM.BR", primary: true, verified: true }]),
+    });
+    const res = await callback("github", testEnv);
+    assert.equal(res.status, 302);
+    assert.equal(await sessionEmail(res, testEnv), "ana@wises.com.br");
+  });
+
+  it("lowercases a Google email before minting the session", async () => {
+    const testEnv = env();
+    mockIdp({
+      tokenUrlPart: "oauth2.googleapis.com/token",
+      userUrlPart: "googleapis.com/oauth2/v2/userinfo",
+      profile: { email: "ana@WISES.COM.BR" },
+    });
+    const res = await callback("google", testEnv);
+    assert.equal(res.status, 302);
+    assert.equal(await sessionEmail(res, testEnv), "ana@wises.com.br");
+  });
+
+  it("lowercases a Microsoft email before minting the session", async () => {
+    const testEnv = env();
+    mockIdp({
+      tokenUrlPart: "login.microsoftonline.com",
+      userUrlPart: "graph.microsoft.com/v1.0/me",
+      profile: { mail: "ana@WISES.COM.BR" },
+    });
+    const res = await callback("microsoft", testEnv);
     assert.equal(res.status, 302);
     assert.equal(await sessionEmail(res, testEnv), "ana@wises.com.br");
   });
@@ -260,9 +351,8 @@ describe("GitHub OAuth callback uses selected email", () => {
         { email: "ana@wises.com.br", verified: false },
       ]),
     });
-    const res = await callback(env());
-    assert.equal(res.status, 403);
-    assert.match(await res.text(), new RegExp(DENIED));
+    const res = await callback("github", env());
+    await assertGithubDenied(res);
   });
 
   it("denies GitHub noreply even when that domain is listed in OAUTH_ALLOWED_DOMAINS", async () => {
@@ -272,9 +362,71 @@ describe("GitHub OAuth callback uses selected email", () => {
       ]),
     });
     const res = await callback(
+      "github",
       env({ OAUTH_ALLOWED_DOMAINS: "users.noreply.github.com" })
     );
+    await assertGithubDenied(res);
+  });
+
+  it("denies when every /user/emails entry is unverified even if /user has a work email", async () => {
+    mockGithub({
+      emails: emails([
+        { email: "ana@gmail.com", primary: true, verified: false },
+        { email: "ana@wises.com.br", verified: false },
+      ]),
+      userEmail: "ana@wises.com.br",
+    });
+    const res = await callback("github", env());
+    await assertGithubDenied(res);
+  });
+
+  it("denies when /user/emails returns 500 even if /user has a work email", async () => {
+    mockGithub({
+      emails: emails([]),
+      emailsStatus: 500,
+      userEmail: "ana@wises.com.br",
+    });
+    const res = await callback("github", env());
+    await assertGithubDenied(res);
+  });
+
+  it("uses the same GitHub denial body for domain-not-allowed and no-verified-email", async () => {
+    mockGithub({
+      emails: emails([{ email: "ana@gmail.com", primary: true, verified: true }]),
+    });
+    const domainDenied = await callback("github", env());
+    const domainBody = await domainDenied.clone().text();
+    assert.equal(domainDenied.status, 403);
+    assert.equal(domainBody, GITHUB_DENIED);
+
+    mockGithub({
+      emails: emails([{ email: "ana@wises.com.br", verified: false }]),
+      userEmail: "ana@wises.com.br",
+    });
+    const unverifiedDenied = await callback("github", env());
+    assert.equal(unverifiedDenied.status, 403);
+    assert.equal(await unverifiedDenied.text(), domainBody);
+  });
+
+  it("keeps the existing Google domain-denied text", async () => {
+    mockIdp({
+      tokenUrlPart: "oauth2.googleapis.com/token",
+      userUrlPart: "googleapis.com/oauth2/v2/userinfo",
+      profile: { email: "ana@gmail.com" },
+    });
+    const res = await callback("google", env());
     assert.equal(res.status, 403);
-    assert.match(await res.text(), new RegExp(DENIED));
+    assert.equal(await res.text(), GOOGLE_MS_DENIED);
+  });
+
+  it("keeps the existing Microsoft domain-denied text", async () => {
+    mockIdp({
+      tokenUrlPart: "login.microsoftonline.com",
+      userUrlPart: "graph.microsoft.com/v1.0/me",
+      profile: { mail: "ana@gmail.com" },
+    });
+    const res = await callback("microsoft", env());
+    assert.equal(res.status, 403);
+    assert.equal(await res.text(), GOOGLE_MS_DENIED);
   });
 });
