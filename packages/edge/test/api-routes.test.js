@@ -762,6 +762,11 @@ const CLAIM_BLOCKED_SLUGS = [
   "static",
   "assets",
   "cdn",
+  "securepublish",
+  "sso",
+  "support",
+  "billing",
+  "security",
 ];
 
 function hostingEnv(initial = {}) {

@@ -13,7 +13,7 @@
  */
 
 import { requireSsoSession, handleAuthRoutes, ssoMode, mintHandoffCookie } from "./sso.js";
-import { checkPanelAccess, accessDeniedBody } from "./acl.js";
+import { checkPanelAccess, accessDeniedBody, isBlockedSignupDomain, normalizeEmailDomain } from "./acl.js";
 import { handleApiRoutes, apiHost } from "./api.js";
 import {
   decodeRecord,
@@ -153,8 +153,9 @@ const BASE_SUFFIX = ".securepublish.work";
 /**
  * Fail-closed host ↔ publisher binding (Marcus / host swap).
  * After panel resolve, before SSO: old slug without lock must 404 (no OAuth redirect).
- * - *.securepublish.work (not reserved): require host:sub:{slug} + publisherEmail match
- * - custom host: require host:custom:{host} owner === publisherEmail
+ * - *.securepublish.work (not reserved): host:sub:{slug} is the lock owner, or
+ *   another non-blocked same-domain publisher (self-service org host)
+ * - custom host: require host:custom:{host} owner === publisherEmail (strict)
  * - *.workers.dev / localhost: serve by panel id (interim)
  */
 export async function assertPanelHostBinding(request, env, panelRecord) {
@@ -177,7 +178,7 @@ export async function assertPanelHostBinding(request, env, panelRecord) {
     if (!slug || slug.includes(".")) return deny;
     const lock = await env.PANELS.get(`host:sub:${slug}`);
     if (!lock) return deny;
-    if (!publisher || lock.trim().toLowerCase() !== publisher) return deny;
+    if (!subdomainLockAllowsPublisher(lock, publisher)) return deny;
     return { ok: true };
   }
 
@@ -185,6 +186,18 @@ export async function assertPanelHostBinding(request, env, panelRecord) {
   if (!lock) return deny;
   if (!publisher || lock.trim().toLowerCase() !== publisher) return deny;
   return { ok: true };
+}
+
+function subdomainLockAllowsPublisher(lockRaw, publisher) {
+  const lock = String(lockRaw || "").trim().toLowerCase();
+  const pub = String(publisher || "").trim().toLowerCase();
+  if (!lock || !pub) return false;
+  if (lock === pub) return true;
+  const lockDomain = normalizeEmailDomain(lock);
+  const pubDomain = normalizeEmailDomain(pub);
+  if (!lockDomain || !pubDomain) return false;
+  if (isBlockedSignupDomain(lock) || isBlockedSignupDomain(pub)) return false;
+  return lockDomain === pubDomain;
 }
 
 async function proxyReservedHost(request, url) {

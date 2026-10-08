@@ -23,6 +23,7 @@ import {
   getViews,
   getTenant,
   claimSubdomain,
+  ensureAutoHost,
   accessToApiMode,
   accessToAllowlist,
   formatPublishedLabel,
@@ -322,6 +323,13 @@ function normalizeHost(host) {
 }
 
 async function resolveHost(kv, email, env) {
+  if (kv && email) {
+    try {
+      await ensureAutoHost(kv, email);
+    } catch {
+      /* lazy auto-host is best-effort; no_host still applies if it fails */
+    }
+  }
   const tenant = await getTenant(kv, email);
   if (tenantIsActiveCustom(tenant)) {
     return normalizeHost(tenant.customHostname);
