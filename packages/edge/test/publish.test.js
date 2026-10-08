@@ -291,38 +291,106 @@ describe("POST /api/panels", () => {
     assert.equal(after.status, 401);
   });
 
-  it("bearer for another account than the cookie is forbidden", async () => {
-    const panels = memoryKv();
-    const token = await issuePublishToken(panels);
-    const env = {
+});
+
+describe("Bearer precedence over session cookie", () => {
+  const CONSOLE = "https://app.securepublish.work";
+  const SECRET = "test-secret-test-secret-test-secret";
+
+  function cookieEnv(panels) {
+    return {
       PANELS: panels,
-      SESSION_SECRET: "test-secret-test-secret-test-secret",
+      SESSION_SECRET: SECRET,
       GOOGLE_CLIENT_ID: "google-client",
       GOOGLE_CLIENT_SECRET: "google-secret",
-      CONSOLE_ORIGIN: "https://app.securepublish.work",
+      CONSOLE_ORIGIN: CONSOLE,
+      OAUTH_ALLOWED_DOMAINS: "wises.com.br",
     };
+  }
+
+  async function cookieHeader(env, email = "ana@wises.com.br") {
     const setCookie = await mintSessionCookie(
       {
-        email: "ana@wises.com.br",
+        email,
         provider: "google",
         exp: Math.floor(Date.now() / 1000) + 600,
       },
       env.SESSION_SECRET,
       env,
-      "https://app.securepublish.work/api/panels"
+      `${CONSOLE}/_auth/callback/google`
     );
+    return setCookie.split(";")[0];
+  }
+
+  it("(a) valid Bearer + valid cookie → identity from Bearer", async () => {
+    const panels = memoryKv();
+    const token = await issuePublishToken(panels);
+    const env = cookieEnv(panels);
+    const cookie = await cookieHeader(env);
     const res = await worker.fetch(
-      new Request("https://app.securepublish.work/api/panels", {
+      new Request(`${CONSOLE}/api/me`, {
+        headers: {
+          Origin: CONSOLE,
+          authorization: `Bearer ${token}`,
+          cookie,
+        },
+      }),
+      env
+    );
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).email, "dev@localhost");
+  });
+
+  it("(b) invalid Bearer + valid cookie → 401", async () => {
+    const panels = memoryKv();
+    const env = cookieEnv(panels);
+    const cookie = await cookieHeader(env);
+    const res = await worker.fetch(
+      new Request(`${CONSOLE}/api/me`, {
+        headers: {
+          Origin: CONSOLE,
+          authorization: `Bearer ${"a".repeat(64)}`,
+          cookie,
+        },
+      }),
+      env
+    );
+    assert.equal(res.status, 401);
+    assert.equal((await res.json()).error, "unauthorized");
+  });
+
+  it("(c) no Bearer + valid cookie → cookie works", async () => {
+    const panels = memoryKv();
+    const env = cookieEnv(panels);
+    const cookie = await cookieHeader(env);
+    const res = await worker.fetch(
+      new Request(`${CONSOLE}/api/me`, {
+        headers: { Origin: CONSOLE, cookie },
+      }),
+      env
+    );
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).email, "ana@wises.com.br");
+  });
+
+  it("(d) invalid Bearer on a mutation with valid cookie and Origin/JSON → 401", async () => {
+    const panels = memoryKv();
+    const env = cookieEnv(panels);
+    const cookie = await cookieHeader(env);
+    const res = await worker.fetch(
+      new Request(`${CONSOLE}/api/panels`, {
         method: "POST",
         headers: {
+          Origin: CONSOLE,
+          cookie,
           "content-type": "application/json",
-          authorization: `Bearer ${token}`,
-          cookie: setCookie.split(";")[0],
+          authorization: `Bearer ${"b".repeat(64)}`,
         },
         body: JSON.stringify({ html: "<p>nope</p>" }),
       }),
       env
     );
-    assert.equal(res.status, 403);
+    assert.equal(res.status, 401);
+    assert.equal((await res.json()).error, "unauthorized");
   });
 });

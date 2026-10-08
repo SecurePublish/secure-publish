@@ -221,36 +221,31 @@ export async function handleApiRoutes(request, env) {
     return handleRevokePublish(request, env);
   }
 
-  const publishPost = url.pathname === "/api/panels" && request.method === "POST";
-  const namePatch =
-    /^\/api\/panels\/[^/]+\/name\/?$/.test(url.pathname) && request.method === "PATCH";
-  let bearerEmail = null;
-  if (publishPost || namePatch) {
-    const header = request.headers.get("authorization") || "";
-    const match = header.match(/^Bearer\s+(\S+)/i);
-    if (match) {
-      const tokenUser = await userFromPublishToken(env.PANELS, match[1]);
-      if (!tokenUser?.email) return err("unauthorized", 401, request, env);
-      bearerEmail = tokenUser.email;
+  // Bearer present → never use the session cookie. Invalid/unknown/expired → 401.
+  const authHeader = request.headers.get("authorization") || "";
+  let email;
+  let domain;
+  let idp;
+  if (/^Bearer\b/i.test(authHeader.trim())) {
+    const match = authHeader.match(/^Bearer\s+(\S+)/i);
+    const tokenUser = match
+      ? await userFromPublishToken(env.PANELS, match[1])
+      : null;
+    if (!tokenUser?.email) return err("unauthorized", 401, request, env);
+    email = tokenUser.email;
+    idp = "device";
+  } else {
+    const sso = await requireSsoSession(request, env, { api: true });
+    if (!sso.ok) {
+      return err(sso.body || "unauthorized", sso.status || 401, request, env);
     }
-  }
-
-  // (1) Every other /api/* requires SSO — no anonymous data.
-  // POST /api/panels also accepts the publish credential in Authorization.
-  const sso = await requireSsoSession(request, env, { api: true });
-  if (!sso.ok && !((publishPost || namePatch) && bearerEmail)) {
-    return err(sso.body || "unauthorized", sso.status || 401, request, env);
-  }
-  const user = sso.ok ? sso.user : { email: bearerEmail, provider: "device" };
-  const email = (user.email || "").trim().toLowerCase();
-  if (bearerEmail && email && bearerEmail !== email) {
-    return err("forbidden", 403, request, env);
+    email = (sso.user?.email || "").trim().toLowerCase();
+    idp = sso.user?.provider || sso.user?.idp || "unknown";
   }
   if (!email || !email.includes("@")) {
     return err("missing_email", 403, request, env);
   }
-  const domain = email.split("@")[1];
-  const idp = user.provider || user.idp || "unknown";
+  domain = email.split("@")[1];
 
   if (url.pathname === "/api/me" && request.method === "GET") {
     return handleMe(request, env, { email, domain, idp });

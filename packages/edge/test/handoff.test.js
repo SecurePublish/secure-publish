@@ -1,5 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import worker, { UNKNOWN_PANEL_BODY } from "../src/worker.js";
 import {
   mintSessionCookie,
@@ -368,6 +370,40 @@ describe("session handoff", () => {
     );
     assert.equal(res.status, 200);
     assert.equal(await res.text(), PANEL_HTML);
+  });
+
+  it("denied-domain __Host-sp_session on a customer host is refused", async () => {
+    const kv = activeCustomKv();
+    const env = oauthEnv(kv);
+    const setCookie = await mintHostBoundSessionCookie(
+      {
+        email: "eve@gmail.com",
+        provider: "handoff",
+        host: HOST_A,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      },
+      env.SESSION_SECRET
+    );
+    const res = await worker.fetch(
+      new Request(`https://${HOST_A}/${PANEL_ID}`, {
+        headers: { Host: HOST_A, Cookie: setCookie.split(";")[0] },
+        redirect: "manual",
+      }),
+      env
+    );
+    assert.equal(res.status, 403);
+    assert.equal(await res.text(), "Acesso negado: domínio de e-mail não autorizado.\n");
+  });
+
+  it("requireSsoSession has no inline domain-allowlist copy", () => {
+    const src = readFileSync(fileURLToPath(new URL("../src/sso.js", import.meta.url)), "utf8");
+    const start = src.indexOf("export async function requireSsoSession");
+    const end = src.indexOf("\nasync function verifyAccessJwt", start);
+    const fn = src.slice(start, end);
+    assert.match(fn, /oauthEmailDeniedByDomainGate\(bound\.email/);
+    assert.match(fn, /oauthEmailDeniedByDomainGate\(session\.email/);
+    assert.equal(fn.includes("OAUTH_ALLOWED_DOMAINS.split"), false);
+    assert.equal(fn.includes("allowed.includes"), false);
   });
 
   it("logout on custom host clears __Host- cookie then goes to app /auth/logout", async () => {

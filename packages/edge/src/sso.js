@@ -208,18 +208,12 @@ export async function requireSsoSession(request, env, opts = {}) {
     }
     const bound = await readHostBoundSessionCookie(request, env.SESSION_SECRET);
     if (bound && bound.host === host) {
-      if (env.OAUTH_ALLOWED_DOMAINS) {
-        const allowed = env.OAUTH_ALLOWED_DOMAINS.split(",")
-          .map((d) => d.trim().toLowerCase())
-          .filter(Boolean);
-        const domain = (bound.email || "").split("@")[1]?.toLowerCase();
-        if (allowed.length && (!domain || !allowed.includes(domain))) {
-          return {
-            ok: false,
-            status: 403,
-            body: "Acesso negado: domínio de e-mail não autorizado.\n",
-          };
-        }
+      if (oauthEmailDeniedByDomainGate(bound.email, env)) {
+        return {
+          ok: false,
+          status: 403,
+          body: "Acesso negado: domínio de e-mail não autorizado.\n",
+        };
       }
       return { ok: true, user: { email: bound.email, provider: bound.provider } };
     }
