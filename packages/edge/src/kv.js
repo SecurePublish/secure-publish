@@ -11,6 +11,9 @@
  * View analytics (PII — serve only to authenticated tenant):
  *   view:{panelId}            → { count, byEmail: { email: { first, last } } }
  *
+ * Org (email-domain tenant; created on first verified work-email sign-in):
+ *   org:{domain}              → { v, domain, createdBy, createdAt }
+ *
  * Tenant hosting (per signed-in user):
  *   tenant:user:{email}       → { email, domain, host, slug?, customHostname?, customVerified?,
  *                                 customVerifyToken?, customStatus?, customCfId?, updatedAt }
@@ -23,7 +26,7 @@
  *   new panels = 10-char Crockford/RFC4648 base32; legacy = 24-hex.
  */
 
-import { normalizeEmails, normalizeDomains } from "./acl.js";
+import { normalizeEmails, normalizeDomains, normalizeEmailDomain } from "./acl.js";
 
 /** Lowercase RFC 4648 base32 alphabet (no padding). */
 export const PANEL_CODE_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
@@ -168,7 +171,7 @@ export async function indexPanel(kv, panelId, publisherEmail, access) {
   }
   const domain =
     email.includes("@")
-      ? email.split("@")[1]
+      ? normalizeEmailDomain(email)
       : (access?.domains && access.domains[0]) || "";
   if (domain) {
     const dKey = `idx:domain:${domain.toLowerCase()}`;
@@ -231,6 +234,58 @@ export async function recordView(kv, panelId, email) {
   await kv.put(`view:${panelId}`, JSON.stringify(views));
 }
 
+export function orgKvKey(domain) {
+  const d = normalizeEmailDomain(domain);
+  return d ? `org:${d}` : "";
+}
+
+export async function getOrg(kv, domain) {
+  const key = orgKvKey(domain);
+  if (!kv || !key) return null;
+  const raw = await kv.get(key);
+  if (!raw) return null;
+  try {
+    const j = JSON.parse(raw);
+    return j && typeof j === "object" ? j : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * First verified work-email user of a domain creates `org:{domain}`; later
+ * users join the same record (createdBy unchanged). Also upserts tenant:user.
+ *
+ * createdBy is provenance only: it must never grant admin powers without a
+ * separate domain proof (SSO email domain === org.domain).
+ * @returns {Promise<{ ok: boolean, org?: object, created?: boolean }>}
+ */
+export async function ensureOrgMembership(kv, email) {
+  if (!kv) return { ok: false };
+  const e = String(email || "").trim().toLowerCase();
+  const domain = normalizeEmailDomain(e);
+  if (!e.includes("@") || !domain) return { ok: false };
+  const key = orgKvKey(domain);
+  let org = await getOrg(kv, domain);
+  const created = !org;
+  if (!org) {
+    org = {
+      v: 1,
+      domain,
+      createdBy: e,
+      createdAt: new Date().toISOString(),
+    };
+    await kv.put(key, JSON.stringify(org));
+  }
+  const prev = await getTenant(kv, e);
+  await putTenant(kv, {
+    ...(prev || {}),
+    email: e,
+    domain,
+  });
+  return { ok: true, org, created };
+}
+
 export async function getTenant(kv, email) {
   const e = String(email || "").trim().toLowerCase();
   if (!e) return null;
@@ -246,7 +301,7 @@ export async function getTenant(kv, email) {
 export async function putTenant(kv, tenant) {
   const e = String(tenant.email || "").trim().toLowerCase();
   if (!e) throw new Error("tenant email required");
-  const domain = e.includes("@") ? e.split("@")[1] : "";
+  const domain = normalizeEmailDomain(e);
   const record = {
     ...tenant,
     email: e,
@@ -411,7 +466,7 @@ export function buildAccessFromPatch(body, publisherEmail) {
     const emails = normalizeEmails(body?.allowlist || body?.emails || []);
     return { mode: "allowlist", emails };
   }
-  const domain = (publisherEmail || "").split("@")[1]?.toLowerCase();
+  const domain = normalizeEmailDomain(publisherEmail);
   return {
     mode: "company",
     domains: normalizeDomains(domain ? [domain] : []),
@@ -448,9 +503,8 @@ async function sha256Hex(value) {
 
 const USER_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
 const BIND_FAIL_LIMIT = 5;
-const BIND_FAIL_GLOBAL_LIMIT = 50;
+const BIND_FAIL_IP_LIMIT = 20;
 const BIND_FAIL_WINDOW_SEC = 600;
-const GLOBAL_BIND_FAIL_KEY = "devbindfail:global";
 
 export function normalizeUserCode(raw) {
   return String(raw ?? "")
@@ -505,19 +559,39 @@ export async function createDeviceCode(kv) {
   };
 }
 
-export async function bindDeviceByUserCode(kv, userCodeRaw, email) {
+function bindFailIpKey(ipRaw) {
+  const ip = String(ipRaw || "").trim();
+  if (!ip || ip.length > 45) return "";
+  if (/[\s/]/.test(ip)) return "";
+  return `devbindfail:ip:${ip}`;
+}
+
+/**
+ * Device bind: per-account 5/10min and per-IP 20/10min (CF-Connecting-IP).
+ * No global failure counter — a cheap domain must not DoS device login.
+ * @param {{ get: Function, put: Function, delete: Function }} kv
+ * @param {unknown} userCodeRaw
+ * @param {string} email
+ * @param {string} [ipRaw]
+ */
+export async function bindDeviceByUserCode(kv, userCodeRaw, email, ipRaw) {
   const owner = String(email || "").trim().toLowerCase();
   const failKey = `devbindfail:${owner}`;
+  const ipKey = bindFailIpKey(ipRaw);
   const accountFails = Number(await kv.get(failKey)) || 0;
-  const globalFails = Number(await kv.get(GLOBAL_BIND_FAIL_KEY)) || 0;
-  if (accountFails >= BIND_FAIL_LIMIT || globalFails >= BIND_FAIL_GLOBAL_LIMIT) {
+  const ipFails = ipKey ? Number(await kv.get(ipKey)) || 0 : 0;
+  if (accountFails >= BIND_FAIL_LIMIT || (ipKey && ipFails >= BIND_FAIL_IP_LIMIT)) {
     return { ok: false, status: 429, error: "device_code_rate_limited" };
   }
 
   async function invalid() {
     await kv.put(failKey, String(accountFails + 1), { expirationTtl: BIND_FAIL_WINDOW_SEC });
-    await kv.put(GLOBAL_BIND_FAIL_KEY, String(globalFails + 1), {
-      expirationTtl: BIND_FAIL_WINDOW_SEC,
+    if (ipKey) {
+      await kv.put(ipKey, String(ipFails + 1), { expirationTtl: BIND_FAIL_WINDOW_SEC });
+    }
+    console.log("device_bind_fail", {
+      account: accountFails + 1,
+      ip: ipKey ? ipFails + 1 : 0,
     });
     return { ok: false, status: 404, error: "device_code_invalid" };
   }

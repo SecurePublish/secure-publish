@@ -5,7 +5,7 @@
  *   - Path key = panel id only (look up HTML in KV). Knowing the URL is NOT auth.
  *   - requireSsoSession must succeed (Access JWT or OAuth cookie).
  *   - Then per-panel ACL:
- *       company | org  → email domain allowlist (OAUTH_ALLOWED_DOMAINS / record.domains)
+ *       company | org  → panel access.domains (publisher email domain)
  *                        NOT Workspace/Entra/GitHub Org membership
  *       allowlist      → explicit emails from CLI --to
  *

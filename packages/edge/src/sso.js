@@ -12,8 +12,9 @@
  * and GET|POST /auth/logout (clear cookie → console /signup/).
  */
 
-import { jwtVerify, createRemoteJWKSet } from "jose";
-import { getTenant } from "./kv.js";
+import { jwtVerify, createRemoteJWKSet, decodeJwt } from "jose";
+import { getTenant, ensureOrgMembership } from "./kv.js";
+import { isBlockedSignupDomain, normalizeEmailDomain } from "./acl.js";
 import {
   isCustomCustomerHost,
   isOwnZoneHost,
@@ -71,79 +72,107 @@ function hasAnyOauthProvider(env) {
   );
 }
 
-const GITHUB_NOREPLY_DOMAIN = "users.noreply.github.com";
+export const MICROSOFT_DOMAIN_UNVERIFIED = "microsoft_domain_unverified";
+export const GOOGLE_WORKSPACE_REQUIRED = "google_workspace_required";
 
-/**
- * Parse OAUTH_ALLOWED_DOMAINS the same way the domain gate does:
- * comma-separated, trim, lower-case. Match the host after @ only — never
- * `includes`/`endsWith` on the raw email string.
- * @param {Record<string, string | undefined>} env
- * @returns {string[]}
- */
-function oauthAllowedDomainList(env = {}) {
-  return String(env.OAUTH_ALLOWED_DOMAINS || "")
-    .split(",")
-    .map((d) => d.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-/** @param {string | undefined} email */
-function oauthEmailDomain(email) {
-  return String(email || "").split("@")[1]?.toLowerCase() || "";
-}
-
-/** Exact domain or a subdomain of users.noreply.github.com. */
-function isGithubNoreplyDomain(domain) {
-  const d = String(domain || "").toLowerCase();
-  return d === GITHUB_NOREPLY_DOMAIN || d.endsWith(`.${GITHUB_NOREPLY_DOMAIN}`);
+function jwtAudMatches(payload, clientId) {
+  const expected = String(clientId || "");
+  if (!expected) return false;
+  const aud = payload?.aud;
+  if (aud === expected) return true;
+  if (Array.isArray(aud)) return aud.some((a) => a === expected);
+  return false;
 }
 
 /**
- * Domain gate: deny when an allowlist is set and the email domain is not an
- * exact member (case-insensitive). GitHub noreply addresses never count as
- * allowed, even if listed in OAUTH_ALLOWED_DOMAINS.
+ * Signup / app-login domain gate: deny personal and free-mail providers
+ * (and their subdomains). OAUTH_ALLOWED_DOMAINS is not used here.
  * @param {string | undefined} email
- * @param {Record<string, string | undefined>} env
+ * @param {Record<string, string | undefined>} [_env]
  */
-function oauthEmailDeniedByDomainGate(email, env = {}) {
-  const allowed = oauthAllowedDomainList(env);
-  if (!allowed.length) return false;
-  const domain = oauthEmailDomain(email);
-  if (!domain || isGithubNoreplyDomain(domain)) return true;
-  return !allowed.includes(domain);
+function oauthEmailDeniedByDomainGate(email, _env = {}) {
+  const domain = normalizeEmailDomain(email);
+  if (!domain) return true;
+  return isBlockedSignupDomain(email);
 }
 
 /**
  * Pick a GitHub `/user/emails` address for the SSO session.
  *
- * Only `verified: true`. If OAUTH_ALLOWED_DOMAINS is set, the first verified
- * email whose domain is an exact (case-insensitive) allowlist member wins —
- * except `users.noreply.github.com` and its subdomains, which never match.
- * If none match, fall back to the primary verified email (or first verified).
- * Empty/unset allowlist keeps primary-verified behaviour.
+ * Only `verified: true`. Prefer the primary when it is a non-personal work
+ * domain; otherwise the first qualifying address in GitHub list order.
+ * Personal/free providers and `users.noreply.github.com` (and subdomains)
+ * never qualify. No match → null (login denied).
  *
  * @param {Array<{ email?: string, verified?: boolean, primary?: boolean }>} emails
- * @param {Record<string, string | undefined>} [env]
+ * @param {Record<string, string | undefined>} [_env]
  * @returns {string | null}
  */
-export function selectGitHubEmail(emails, env = {}) {
+export function selectGitHubEmail(emails, _env = {}) {
   if (!Array.isArray(emails)) return null;
-  const verified = emails.filter(
-    (e) => e && e.verified === true && typeof e.email === "string" && e.email
-  );
-  if (!verified.length) return null;
+  const qualifying = emails.filter((e) => {
+    if (!e || e.verified !== true || typeof e.email !== "string" || !e.email) {
+      return false;
+    }
+    const domain = normalizeEmailDomain(e.email);
+    return Boolean(domain) && !isBlockedSignupDomain(e.email);
+  });
+  if (!qualifying.length) return null;
+  const primary = qualifying.find((e) => e.primary);
+  return (primary || qualifying[0]).email;
+}
 
-  const allowed = oauthAllowedDomainList(env);
-  if (allowed.length) {
-    const match = verified.find((e) => {
-      const domain = oauthEmailDomain(e.email);
-      return Boolean(domain) && !isGithubNoreplyDomain(domain) && allowed.includes(domain);
-    });
-    if (match) return match.email;
+function microsoftEdovTrue(value) {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+/**
+ * Microsoft identity from the token-endpoint id_token only.
+ * Requires aud === client_id, xms_edov === true, and a string `email` claim.
+ * Never uses upn / preferred_username / Graph mail.
+ * @param {Record<string, unknown>} tokenJson
+ * @param {string} [clientId]
+ * @returns {{ email: string } | { error: string }}
+ */
+export function emailFromMicrosoftIdToken(tokenJson, clientId) {
+  const raw = tokenJson && typeof tokenJson.id_token === "string" ? tokenJson.id_token : "";
+  if (!raw) return { error: MICROSOFT_DOMAIN_UNVERIFIED };
+  let payload;
+  try {
+    payload = decodeJwt(raw);
+  } catch {
+    return { error: MICROSOFT_DOMAIN_UNVERIFIED };
   }
+  if (!jwtAudMatches(payload, clientId)) {
+    return { error: MICROSOFT_DOMAIN_UNVERIFIED };
+  }
+  if (!microsoftEdovTrue(payload?.xms_edov)) {
+    return { error: MICROSOFT_DOMAIN_UNVERIFIED };
+  }
+  const email = typeof payload.email === "string" ? payload.email.trim() : "";
+  if (!email || !email.includes("@")) {
+    return { error: MICROSOFT_DOMAIN_UNVERIFIED };
+  }
+  return { email };
+}
 
-  const primary = verified.find((e) => e.primary);
-  return (primary || verified[0]).email;
+/**
+ * Google Workspace hosted domain: userinfo `hd`, else id_token `hd` (aud-checked).
+ * @param {Record<string, unknown>} me
+ * @param {Record<string, unknown>} tokenJson
+ * @param {string} [clientId]
+ */
+function googleHostedDomain(me, tokenJson, clientId) {
+  if (typeof me?.hd === "string" && me.hd.trim()) return me.hd.trim();
+  const raw = tokenJson && typeof tokenJson.id_token === "string" ? tokenJson.id_token : "";
+  if (!raw) return "";
+  try {
+    const payload = decodeJwt(raw);
+    if (!jwtAudMatches(payload, clientId)) return "";
+    return typeof payload.hd === "string" ? payload.hd.trim() : "";
+  } catch {
+    return "";
+  }
 }
 
 /** Exact origins from CONSOLE_ORIGIN via `new URL().origin` — no suffix matching. */
@@ -212,7 +241,9 @@ export async function requireSsoSession(request, env, opts = {}) {
         return {
           ok: false,
           status: 403,
-          body: "Acesso negado: domínio de e-mail não autorizado.\n",
+          body: forApi
+            ? "company_requires_work_domain"
+            : "Acesso negado: domínio de e-mail não autorizado.\n",
         };
       }
       return { ok: true, user: { email: bound.email, provider: bound.provider } };
@@ -235,7 +266,9 @@ export async function requireSsoSession(request, env, opts = {}) {
       return {
         ok: false,
         status: 403,
-        body: forApi ? "domain_not_allowed" : "Acesso negado: domínio de e-mail não autorizado.\n",
+        body: forApi
+          ? "company_requires_work_domain"
+          : "Acesso negado: domínio de e-mail não autorizado.\n",
       };
     }
     return { ok: true, user: { email: session.email, provider: session.provider } };
@@ -706,12 +739,14 @@ async function oauthCallback(request, env, provider) {
   }
 
   const tokenJson = await tokenRes.json();
-  const accessToken = tokenJson.access_token;
-  if (!accessToken) {
-    return new Response("Token OAuth ausente.\n", { status: 502 });
+  const identity = await fetchUserIdentity(provider, cfg, tokenJson, env);
+  if (identity?.error === MICROSOFT_DOMAIN_UNVERIFIED) {
+    return microsoftDomainUnverifiedResponse();
   }
-
-  const email = String((await fetchUserEmail(provider, cfg, accessToken, env)) || "")
+  if (identity?.error === GOOGLE_WORKSPACE_REQUIRED) {
+    return googleWorkspaceRequiredResponse();
+  }
+  const email = String(identity?.email || "")
     .trim()
     .toLowerCase();
   if (!email) {
@@ -724,6 +759,14 @@ async function oauthCallback(request, env, provider) {
     return new Response("Acesso negado: domínio de e-mail não autorizado.\n", {
       status: 403,
     });
+  }
+
+  if (env.PANELS) {
+    try {
+      await ensureOrgMembership(env.PANELS, email);
+    } catch {
+      /* org upsert is best-effort; session still mints */
+    }
   }
 
   // Mint against the canonical callback URL so cookieAttrs always applies
@@ -768,7 +811,32 @@ function githubLoginDeniedResponse() {
   });
 }
 
-async function fetchUserEmail(provider, cfg, accessToken, env = {}) {
+function microsoftDomainUnverifiedResponse() {
+  // Placeholder copy — Sarah will write the final end-user message.
+  return new Response(`${MICROSOFT_DOMAIN_UNVERIFIED}\n`, {
+    status: 403,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+}
+
+function googleWorkspaceRequiredResponse() {
+  return new Response(`${GOOGLE_WORKSPACE_REQUIRED}\n`, {
+    status: 403,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+}
+
+/**
+ * @returns {Promise<{ email?: string, error?: string } | null>}
+ */
+async function fetchUserIdentity(provider, cfg, tokenJson, env = {}) {
+  if (provider === "microsoft") {
+    return emailFromMicrosoftIdToken(tokenJson || {}, env.MICROSOFT_CLIENT_ID);
+  }
+
+  const accessToken = tokenJson?.access_token;
+  if (!accessToken) return null;
+
   if (provider === "github") {
     // Email must come only from /user/emails with verified: true. Never /user.
     try {
@@ -781,19 +849,11 @@ async function fetchUserEmail(provider, cfg, accessToken, env = {}) {
       });
       if (!emailsRes.ok) return null;
       const emails = await emailsRes.json();
-      return selectGitHubEmail(emails, env);
+      const email = selectGitHubEmail(emails, env);
+      return email ? { email } : null;
     } catch {
       return null;
     }
-  }
-
-  if (provider === "microsoft") {
-    const res = await fetch(cfg.userUrl, {
-      headers: { authorization: `Bearer ${accessToken}` },
-    });
-    if (!res.ok) return null;
-    const me = await res.json();
-    return me.mail || me.userPrincipalName || null;
   }
 
   const res = await fetch(cfg.userUrl, {
@@ -801,7 +861,16 @@ async function fetchUserEmail(provider, cfg, accessToken, env = {}) {
   });
   if (!res.ok) return null;
   const me = await res.json();
-  return me.email || null;
+  const verified = me.email_verified === true || me.verified_email === true;
+  if (!verified) return null;
+  const email = typeof me.email === "string" ? me.email : "";
+  if (!email) return null;
+  const hd = normalizeEmailDomain(googleHostedDomain(me, tokenJson, env.GOOGLE_CLIENT_ID));
+  const domain = normalizeEmailDomain(email);
+  if (!hd || !domain || hd !== domain) {
+    return { error: GOOGLE_WORKSPACE_REQUIRED };
+  }
+  return { email };
 }
 
 function defaultReturnTo(env) {

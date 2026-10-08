@@ -3,51 +3,94 @@
  * Does NOT verify Workspace / Entra / GitHub Org membership.
  */
 
-/** Public mailbox domains — company mode is not allowed. Exact match only. */
-export const PUBLIC_EMAIL_DOMAINS = [
-  "gmail.com",
-  "googlemail.com",
-  "outlook.com",
-  "outlook.com.br",
-  "hotmail.com",
-  "hotmail.com.br",
-  "live.com",
-  "msn.com",
-  "yahoo.com",
-  "yahoo.com.br",
-  "icloud.com",
-  "me.com",
-  "mac.com",
-  "aol.com",
-  "proton.me",
-  "protonmail.com",
-  "gmx.com",
-  "zoho.com",
-  "yandex.com",
-  "mail.com",
-  "uol.com.br",
-  "bol.com.br",
-  "terra.com.br",
-  "ig.com.br",
-  "users.noreply.github.com",
-];
+import { FREE_EMAIL_DOMAINS } from "./free-email-domains.js";
 
-const PUBLIC_EMAIL_DOMAIN_SET = new Set(
-  PUBLIC_EMAIL_DOMAINS.map((d) => d.toLowerCase())
-);
+export { FREE_EMAIL_DOMAINS };
 
 /**
- * Exact domain match against PUBLIC_EMAIL_DOMAINS (case-insensitive).
- * Accepts an email (`User@GMAIL.com`) or a bare domain. Subdomains are not matched.
+ * Hosts to block in addition to free-email-domains@1.12.22:
+ * GitHub noreply (required), plus live.com.br / tutanota.com which the
+ * dataset omits but are personal/free mailboxes.
  */
-export function isPublicEmailDomain(emailOrDomain) {
+const EXTRA_BLOCKED_SIGNUP_DOMAINS = new Set([
+  "users.noreply.github.com",
+  "live.com.br",
+  "tutanota.com",
+]);
+
+const BLOCKED_SIGNUP_EXACT = new Set([...FREE_EMAIL_DOMAINS, ...EXTRA_BLOCKED_SIGNUP_DOMAINS]);
+
+/** ASCII host after lowercase + IDN→punycode. Reject anything else; never repair. */
+const EMAIL_DOMAIN_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+
+function rawEmailDomain(emailOrDomain) {
   const raw = String(emailOrDomain || "")
     .trim()
     .toLowerCase();
-  if (!raw) return false;
-  const domain = raw.includes("@") ? raw.split("@")[1] : raw.replace(/^@/, "");
-  return Boolean(domain) && PUBLIC_EMAIL_DOMAIN_SET.has(domain);
+  if (!raw) return "";
+  const host = raw.includes("@") ? raw.split("@").pop() : raw.replace(/^@/, "");
+  return String(host || "").trim();
 }
+
+/**
+ * IDN → ASCII punycode for Unicode labels only. ASCII input is never passed
+ * through `new URL` (that would strip `#` `?` `/` and mint a "valid" host).
+ */
+function idnToPunycodeNoRepair(domain) {
+  if (!domain) return "";
+  if (/^[\x00-\x7F]*$/.test(domain)) return domain;
+  if (/[#/?\\:@[\]\s]/.test(domain)) return domain;
+  try {
+    return new URL("https://" + domain).hostname.toLowerCase();
+  } catch {
+    return domain;
+  }
+}
+
+/**
+ * Lowercase, trim, IDN→punycode, then exact ASCII host regex.
+ * Invalid input returns "" — callers must deny; the string is never repaired.
+ * `localhost` is allowed only for SSO_DEV_BYPASS / local tests (not a TLD).
+ */
+export function normalizeEmailDomain(emailOrDomain) {
+  const ascii = idnToPunycodeNoRepair(rawEmailDomain(emailOrDomain));
+  if (ascii === "localhost") return ascii;
+  if (!EMAIL_DOMAIN_RE.test(ascii)) return "";
+  return ascii;
+}
+
+function domainOrAncestorBlocked(domain) {
+  if (BLOCKED_SIGNUP_EXACT.has(domain)) return true;
+  let rest = domain;
+  let dot;
+  while ((dot = rest.indexOf(".")) !== -1) {
+    rest = rest.slice(dot + 1);
+    if (BLOCKED_SIGNUP_EXACT.has(rest)) return true;
+  }
+  return false;
+}
+
+/**
+ * Exact domain match against the free-mail blocklist (case-insensitive).
+ * Accepts an email or a bare domain. Subdomains are not matched here.
+ */
+export function isPublicEmailDomain(emailOrDomain) {
+  const domain = normalizeEmailDomain(emailOrDomain);
+  return Boolean(domain) && BLOCKED_SIGNUP_EXACT.has(domain);
+}
+
+/**
+ * Signup / app-login blocklist. Invalid domains, listed free providers, and
+ * subdomains of those providers (mail.yahoo.com, users.noreply.github.com).
+ */
+export function isBlockedSignupDomain(emailOrDomain) {
+  const domain = normalizeEmailDomain(emailOrDomain);
+  if (!domain) return true;
+  return domainOrAncestorBlocked(domain);
+}
+
+/** @deprecated use FREE_EMAIL_DOMAINS; kept as the exact-match set for tests. */
+export const PUBLIC_EMAIL_DOMAINS = BLOCKED_SIGNUP_EXACT;
 
 export function normalizeEmails(emails) {
   const out = [];
@@ -119,7 +162,7 @@ export function checkPanelAccess(user, access, env, publisherEmail) {
     return { ok: false, reason: "public_company_domain" };
   }
   if (!domains.length) return { ok: false, reason: "no_company_domains" };
-  const domain = email.split("@")[1];
+  const domain = normalizeEmailDomain(email);
   if (!domain || !domains.includes(domain)) {
     return { ok: false, reason: "domain_not_allowed" };
   }
