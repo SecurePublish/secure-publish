@@ -16,6 +16,7 @@ Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)
 | PUT | `/api/hosting/custom` | `{ hostname }` → claim; TXT `sp-verify=<opaque-token>`; **not served until verified** |
 | DELETE | `/api/hosting/custom` | clear **unverified** pending claim only (`404` / `409` if none / verified) |
 | POST | `/api/hosting/custom/verify` | DoH TXT `_secure-publish.<host>` = stored opaque token → `customVerified` + switch `host` |
+| GET | `/auth/providers` | `{ providers }` — configured IdPs (client id+secret); public, CORS+credentials |
 | GET | `/auth/{google\|microsoft\|github}` | OAuth start (`?next=` → return); callback pinned to `app.securepublish.work` |
 | GET\|POST | `/auth/logout` | Clear `secure_publish_session` with **same** Path/SameSite/Secure/Domain as login → 302 first `CONSOLE_ORIGIN` + `/signup/` (idempotent; ignores `?next=`; `cache-control: no-store`) |
 | GET | `/:panelId` | HTML after SSO + ACL (Lock A). Session cookie `Domain=.securepublish.work` from console login is accepted on panel hosts. |
