@@ -59,6 +59,81 @@ function hasAnyOauthProvider(env) {
   );
 }
 
+const GITHUB_NOREPLY_DOMAIN = "users.noreply.github.com";
+
+/**
+ * Parse OAUTH_ALLOWED_DOMAINS the same way the domain gate does:
+ * comma-separated, trim, lower-case. Match the host after @ only — never
+ * `includes`/`endsWith` on the raw email string.
+ * @param {Record<string, string | undefined>} env
+ * @returns {string[]}
+ */
+function oauthAllowedDomainList(env = {}) {
+  return String(env.OAUTH_ALLOWED_DOMAINS || "")
+    .split(",")
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/** @param {string | undefined} email */
+function oauthEmailDomain(email) {
+  return String(email || "").split("@")[1]?.toLowerCase() || "";
+}
+
+/** Exact domain or a subdomain of users.noreply.github.com. */
+function isGithubNoreplyDomain(domain) {
+  const d = String(domain || "").toLowerCase();
+  return d === GITHUB_NOREPLY_DOMAIN || d.endsWith(`.${GITHUB_NOREPLY_DOMAIN}`);
+}
+
+/**
+ * Domain gate: deny when an allowlist is set and the email domain is not an
+ * exact member (case-insensitive). GitHub noreply addresses never count as
+ * allowed, even if listed in OAUTH_ALLOWED_DOMAINS.
+ * @param {string | undefined} email
+ * @param {Record<string, string | undefined>} env
+ */
+function oauthEmailDeniedByDomainGate(email, env = {}) {
+  const allowed = oauthAllowedDomainList(env);
+  if (!allowed.length) return false;
+  const domain = oauthEmailDomain(email);
+  if (!domain || isGithubNoreplyDomain(domain)) return true;
+  return !allowed.includes(domain);
+}
+
+/**
+ * Pick a GitHub `/user/emails` address for the SSO session.
+ *
+ * Only `verified: true`. If OAUTH_ALLOWED_DOMAINS is set, the first verified
+ * email whose domain is an exact (case-insensitive) allowlist member wins —
+ * except `users.noreply.github.com` and its subdomains, which never match.
+ * If none match, fall back to the primary verified email (or first verified).
+ * Empty/unset allowlist keeps primary-verified behaviour.
+ *
+ * @param {Array<{ email?: string, verified?: boolean, primary?: boolean }>} emails
+ * @param {Record<string, string | undefined>} [env]
+ * @returns {string | null}
+ */
+export function selectGitHubEmail(emails, env = {}) {
+  if (!Array.isArray(emails)) return null;
+  const verified = emails.filter(
+    (e) => e && e.verified === true && typeof e.email === "string" && e.email
+  );
+  if (!verified.length) return null;
+
+  const allowed = oauthAllowedDomainList(env);
+  if (allowed.length) {
+    const match = verified.find((e) => {
+      const domain = oauthEmailDomain(e.email);
+      return Boolean(domain) && !isGithubNoreplyDomain(domain) && allowed.includes(domain);
+    });
+    if (match) return match.email;
+  }
+
+  const primary = verified.find((e) => e.primary);
+  return (primary || verified[0]).email;
+}
+
 function consoleOrigins(env) {
   const raw = env.CONSOLE_ORIGIN || env.CONSOLE_ORIGINS || "";
   return String(raw)
@@ -106,18 +181,12 @@ export async function requireSsoSession(request, env, opts = {}) {
   // oauth
   const session = await readSessionCookie(request, env.SESSION_SECRET);
   if (session) {
-    if (env.OAUTH_ALLOWED_DOMAINS) {
-      const allowed = env.OAUTH_ALLOWED_DOMAINS.split(",")
-        .map((d) => d.trim().toLowerCase())
-        .filter(Boolean);
-      const domain = (session.email || "").split("@")[1]?.toLowerCase();
-      if (allowed.length && (!domain || !allowed.includes(domain))) {
-        return {
-          ok: false,
-          status: 403,
-          body: forApi ? "domain_not_allowed" : "Acesso negado: domínio de e-mail não autorizado.\n",
-        };
-      }
+    if (oauthEmailDeniedByDomainGate(session.email, env)) {
+      return {
+        ok: false,
+        status: 403,
+        body: forApi ? "domain_not_allowed" : "Acesso negado: domínio de e-mail não autorizado.\n",
+      };
     }
     return { ok: true, user: { email: session.email, provider: session.provider } };
   }
@@ -161,18 +230,12 @@ async function verifyAccessJwt(request, env) {
     });
 
     const email = typeof payload.email === "string" ? payload.email : undefined;
-    if (env.OAUTH_ALLOWED_DOMAINS && email) {
-      const allowed = env.OAUTH_ALLOWED_DOMAINS.split(",")
-        .map((d) => d.trim().toLowerCase())
-        .filter(Boolean);
-      const domain = email.split("@")[1]?.toLowerCase();
-      if (allowed.length && (!domain || !allowed.includes(domain))) {
-        return {
-          ok: false,
-          status: 403,
-          body: "Acesso negado: domínio de e-mail não autorizado.\n",
-        };
-      }
+    if (email && oauthEmailDeniedByDomainGate(email, env)) {
+      return {
+        ok: false,
+        status: 403,
+        body: "Acesso negado: domínio de e-mail não autorizado.\n",
+      };
     }
 
     return {
@@ -607,21 +670,19 @@ async function oauthCallback(request, env, provider) {
     return new Response("Token OAuth ausente.\n", { status: 502 });
   }
 
-  const email = await fetchUserEmail(provider, cfg, accessToken);
+  const email = String((await fetchUserEmail(provider, cfg, accessToken, env)) || "")
+    .trim()
+    .toLowerCase();
   if (!email) {
+    if (provider === "github") return githubLoginDeniedResponse();
     return new Response("Não foi possível obter e-mail do provedor.\n", { status: 502 });
   }
 
-  if (env.OAUTH_ALLOWED_DOMAINS) {
-    const allowed = env.OAUTH_ALLOWED_DOMAINS.split(",")
-      .map((d) => d.trim().toLowerCase())
-      .filter(Boolean);
-    const domain = email.split("@")[1]?.toLowerCase();
-    if (allowed.length && (!domain || !allowed.includes(domain))) {
-      return new Response("Acesso negado: domínio de e-mail não autorizado.\n", {
-        status: 403,
-      });
-    }
+  if (oauthEmailDeniedByDomainGate(email, env)) {
+    if (provider === "github") return githubLoginDeniedResponse();
+    return new Response("Acesso negado: domínio de e-mail não autorizado.\n", {
+      status: 403,
+    });
   }
 
   // Mint against the canonical callback URL so cookieAttrs always applies
@@ -691,30 +752,34 @@ function deviceDonePage(ok) {
   });
 }
 
-async function fetchUserEmail(provider, cfg, accessToken) {
+const GITHUB_LOGIN_DENIED_BODY =
+  "Não conseguimos entrar com essa conta do GitHub. Ela precisa ter o e-mail da empresa confirmado no GitHub. Confira em github.com/settings/emails ou entre com outra conta.\n" +
+  "We couldn't sign you in with this GitHub account. It needs your company email confirmed on GitHub. Check github.com/settings/emails or sign in with another account.\n";
+
+function githubLoginDeniedResponse() {
+  return new Response(GITHUB_LOGIN_DENIED_BODY, {
+    status: 403,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+}
+
+async function fetchUserEmail(provider, cfg, accessToken, env = {}) {
   if (provider === "github") {
-    const emailsRes = await fetch(cfg.emailUrl, {
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        accept: "application/vnd.github+json",
-        "user-agent": "secure-publish",
-      },
-    });
-    if (emailsRes.ok) {
+    // Email must come only from /user/emails with verified: true. Never /user.
+    try {
+      const emailsRes = await fetch(cfg.emailUrl, {
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          accept: "application/vnd.github+json",
+          "user-agent": "secure-publish",
+        },
+      });
+      if (!emailsRes.ok) return null;
       const emails = await emailsRes.json();
-      const primary = emails.find((e) => e.primary && e.verified) || emails.find((e) => e.verified);
-      if (primary?.email) return primary.email;
+      return selectGitHubEmail(emails, env);
+    } catch {
+      return null;
     }
-    const userRes = await fetch(cfg.userUrl, {
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        accept: "application/vnd.github+json",
-        "user-agent": "secure-publish",
-      },
-    });
-    if (!userRes.ok) return null;
-    const user = await userRes.json();
-    return user.email || null;
   }
 
   if (provider === "microsoft") {
