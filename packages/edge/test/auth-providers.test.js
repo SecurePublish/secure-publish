@@ -6,7 +6,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/worker.js";
 
-const PANEL_404 = "Not found — invalid or unknown panel id.";
+const PANEL_404_MARKERS = [
+  "Not found — invalid or unknown panel id.",
+  "Não achamos este dashboard",
+];
 const APP = "https://app.securepublish.work";
 const CONSOLE_ORIGIN = "https://app.securepublish.work";
 
@@ -94,7 +97,9 @@ describe("GET /auth/providers on app host", () => {
   it("does not return the panel-id 404 body", async () => {
     const res = await worker.fetch(appRequest("/auth/providers"), googleOnlyEnv());
     const text = await res.clone().text();
-    assert.notEqual(text, PANEL_404);
+    for (const marker of PANEL_404_MARKERS) {
+      assert.equal(text.includes(marker), false, marker);
+    }
     assert.notEqual(res.status, 404);
   });
 });
@@ -131,13 +136,14 @@ describe("documented /auth/* and /api/* on app host are not swallowed by panel 4
     { method: "GET", path: "/auth/logout" },
     { method: "POST", path: "/auth/logout" },
     { method: "GET", path: "/auth/providers" },
+    { method: "GET", path: "/auth/switch" },
     { method: "GET", path: "/_auth/callback/google" },
     { method: "GET", path: "/_auth/callback/github" },
     { method: "GET", path: "/_auth/callback/microsoft" },
   ];
 
   it("lists every documented console route (guards against missing a contract path)", () => {
-    assert.equal(documented.length, 22);
+    assert.equal(documented.length, 23);
   });
 
   it("none of the documented app-host routes return the panel 404", async () => {
@@ -153,7 +159,7 @@ describe("documented /auth/* and /api/* on app host are not swallowed by panel 4
         env
       );
       const text = await res.text();
-      if (text === PANEL_404 || text.trim() === PANEL_404) {
+      if (PANEL_404_MARKERS.some((m) => text.includes(m))) {
         failures.push(`${route.method} ${route.path} → ${res.status} panel 404`);
       }
     }

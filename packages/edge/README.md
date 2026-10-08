@@ -19,6 +19,7 @@ Contract (source of truth): [`docs/API-CONTRACT.md`](../../docs/API-CONTRACT.md)
 | GET | `/auth/providers` | `{ providers }` — configured IdPs (client id+secret); public, CORS+credentials |
 | GET | `/auth/{google\|microsoft\|github}` | OAuth start (`?next=` → return); callback pinned to `app.securepublish.work` |
 | GET\|POST | `/auth/logout` | Clear `secure_publish_session` with **same** Path/SameSite/Secure/Domain as login → 302 first `CONSOLE_ORIGIN` + `/signup/` (idempotent; ignores `?next=`; `cache-control: no-store`) |
+| GET | `/auth/switch` | Clear session like logout, validate `?return=` (https + `*.securepublish.work` hostname only; pathname only), Google `prompt=select_account`; callback re-validates return (see `docs/API-CONTRACT.md`) |
 | GET | `/:panelId` | HTML after SSO + ACL (Lock A). Session cookie `Domain=.securepublish.work` from console login is accepted on panel hosts. |
 
 ### Marcus checklist
