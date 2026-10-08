@@ -100,6 +100,7 @@ describe("API routes — Marcus checklist", () => {
     assert.equal(body.email, "dev@localhost");
     assert.equal(body.idp, "dev-bypass");
     assert.equal(body.domain, "localhost");
+    assert.equal(body.publicDomain, false);
     assert.ok("host" in body);
     // No subdomain claimed yet — must be null, never "" (console would show https:///{id})
     assert.equal(body.host, null);

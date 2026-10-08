@@ -3,6 +3,52 @@
  * Does NOT verify Workspace / Entra / GitHub Org membership.
  */
 
+/** Public mailbox domains — company mode is not allowed. Exact match only. */
+export const PUBLIC_EMAIL_DOMAINS = [
+  "gmail.com",
+  "googlemail.com",
+  "outlook.com",
+  "outlook.com.br",
+  "hotmail.com",
+  "hotmail.com.br",
+  "live.com",
+  "msn.com",
+  "yahoo.com",
+  "yahoo.com.br",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "aol.com",
+  "proton.me",
+  "protonmail.com",
+  "gmx.com",
+  "zoho.com",
+  "yandex.com",
+  "mail.com",
+  "uol.com.br",
+  "bol.com.br",
+  "terra.com.br",
+  "ig.com.br",
+  "users.noreply.github.com",
+];
+
+const PUBLIC_EMAIL_DOMAIN_SET = new Set(
+  PUBLIC_EMAIL_DOMAINS.map((d) => d.toLowerCase())
+);
+
+/**
+ * Exact domain match against PUBLIC_EMAIL_DOMAINS (case-insensitive).
+ * Accepts an email (`User@GMAIL.com`) or a bare domain. Subdomains are not matched.
+ */
+export function isPublicEmailDomain(emailOrDomain) {
+  const raw = String(emailOrDomain || "")
+    .trim()
+    .toLowerCase();
+  if (!raw) return false;
+  const domain = raw.includes("@") ? raw.split("@")[1] : raw.replace(/^@/, "");
+  return Boolean(domain) && PUBLIC_EMAIL_DOMAIN_SET.has(domain);
+}
+
 export function normalizeEmails(emails) {
   const out = [];
   const seen = new Set();
@@ -42,9 +88,13 @@ export function envCompanyDomains(env) {
 }
 
 /**
+ * @param {{ email?: string }} user
+ * @param {{ mode?: string, emails?: string[], domains?: string[] }} access
+ * @param {Record<string, string | undefined>} env
+ * @param {string} [publisherEmail] panel owner (publisherEmail field)
  * @returns {{ ok: boolean, reason?: string }}
  */
-export function checkPanelAccess(user, access, env) {
+export function checkPanelAccess(user, access, env, publisherEmail) {
   const email = (user?.email || "").trim().toLowerCase();
   if (!email || !email.includes("@")) {
     return { ok: false, reason: "missing_email" };
@@ -61,6 +111,13 @@ export function checkPanelAccess(user, access, env) {
   const domains = normalizeDomains(
     access?.domains?.length ? access.domains : envCompanyDomains(env)
   );
+  if (domains.some((d) => isPublicEmailDomain(d))) {
+    const publisher = String(publisherEmail || "")
+      .trim()
+      .toLowerCase();
+    if (publisher && publisher === email) return { ok: true };
+    return { ok: false, reason: "public_company_domain" };
+  }
   if (!domains.length) return { ok: false, reason: "no_company_domains" };
   const domain = email.split("@")[1];
   if (!domain || !domains.includes(domain)) {

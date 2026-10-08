@@ -10,6 +10,7 @@
  */
 
 import { requireSsoSession, ssoMode } from "./sso.js";
+import { isPublicEmailDomain, normalizeDomains } from "./acl.js";
 import {
   getPanel,
   putPanel,
@@ -212,6 +213,7 @@ async function handleMe(request, env, { email, domain, idp }) {
     email,
     idp,
     domain,
+    publicDomain: isPublicEmailDomain(email),
     // Serving host only (verified custom or subdomain) — never "".
     host,
     customHostname,
@@ -258,6 +260,14 @@ async function handleListPanels(request, env, url, { email, domain }) {
       const pubDomain = publisherEmail.includes("@")
         ? publisherEmail.split("@")[1]
         : (record.access?.domains || [])[0];
+      const companyDomains = normalizeDomains(
+        record.access?.domains?.length
+          ? record.access.domains
+          : pubDomain
+            ? [pubDomain]
+            : []
+      );
+      if (companyDomains.some((d) => isPublicEmailDomain(d))) continue;
       if (pubDomain && pubDomain !== domain) continue;
       // If no publisherEmail (legacy), require access.domains includes viewer domain
       if (!publisherEmail) {
@@ -316,6 +326,9 @@ async function handlePatchAccess(request, env, panelId, { email }) {
   }
 
   const mode = (body.mode || "company").toLowerCase() === "allowlist" ? "allowlist" : "company";
+  if (mode === "company" && isPublicEmailDomain(email)) {
+    return err("company_requires_work_domain", 400, request, env);
+  }
   if (mode === "allowlist") {
     const list = Array.isArray(body.allowlist) ? body.allowlist : [];
     if (!list.length) {
@@ -463,9 +476,6 @@ async function handlePublishPanel(request, env, { email, domain }) {
     return err("html_too_large", 413, request, env);
   }
 
-  const host = await resolveHost(env.PANELS, email, env);
-  if (!host) return err("no_host", 409, request, env);
-
   const toField = body.to !== undefined ? body.to : body.allowlist;
   const toProvided = body.to !== undefined || body.allowlist !== undefined;
   let toList = [];
@@ -483,8 +493,14 @@ async function handlePublishPanel(request, env, { email, domain }) {
     return err("min_email", 400, request, env);
   }
   if (access.mode === "company") {
+    if (isPublicEmailDomain(email)) {
+      return err("company_requires_work_domain", 400, request, env);
+    }
     access.domains = [domain];
   }
+
+  const host = await resolveHost(env.PANELS, email, env);
+  if (!host) return err("no_host", 409, request, env);
 
   let title = "untitled";
   if (typeof body.title === "string" && body.title.trim()) {
