@@ -140,7 +140,7 @@ describe("CSRF for cookie-authenticated /api mutations", () => {
       appReq("/api/device/code", { method: "POST", headers: { accept: "application/json" } }),
       env
     );
-    const { device_code } = await started.json();
+    const { user_code } = await started.json();
     const res = await worker.fetch(
       appReq("/api/device/bind", {
         method: "POST",
@@ -149,7 +149,7 @@ describe("CSRF for cookie-authenticated /api mutations", () => {
           Cookie: cookie,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ device_code }),
+        body: JSON.stringify({ user_code }),
       }),
       env
     );
@@ -164,7 +164,7 @@ describe("CSRF for cookie-authenticated /api mutations", () => {
       appReq("/api/device/code", { method: "POST", headers: { accept: "application/json" } }),
       env
     );
-    const { device_code } = await started.json();
+    const { user_code } = await started.json();
     const res = await worker.fetch(
       appReq("/api/device/bind", {
         method: "POST",
@@ -173,7 +173,7 @@ describe("CSRF for cookie-authenticated /api mutations", () => {
           Cookie: cookie,
           "content-type": "text/plain",
         },
-        body: JSON.stringify({ device_code }),
+        body: JSON.stringify({ user_code }),
       }),
       env
     );
@@ -188,7 +188,7 @@ describe("CSRF for cookie-authenticated /api mutations", () => {
       appReq("/api/device/code", { method: "POST", headers: { accept: "application/json" } }),
       env
     );
-    const { device_code } = await started.json();
+    const { user_code } = await started.json();
     const res = await worker.fetch(
       appReq("/api/device/bind", {
         method: "POST",
@@ -197,7 +197,7 @@ describe("CSRF for cookie-authenticated /api mutations", () => {
           Cookie: cookie,
           "content-type": "application/json; charset=utf-8",
         },
-        body: JSON.stringify({ device_code }),
+        body: JSON.stringify({ user_code }),
       }),
       env
     );
@@ -212,7 +212,7 @@ describe("CSRF for cookie-authenticated /api mutations", () => {
       appReq("/api/device/code", { method: "POST", headers: { accept: "application/json" } }),
       env
     );
-    const { device_code } = await started.json();
+    const { user_code } = await started.json();
     const res = await worker.fetch(
       appReq("/api/device/bind", {
         method: "POST",
@@ -220,7 +220,7 @@ describe("CSRF for cookie-authenticated /api mutations", () => {
           Cookie: cookie,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ device_code }),
+        body: JSON.stringify({ user_code }),
       }),
       env
     );
@@ -245,7 +245,7 @@ describe("CSRF for cookie-authenticated /api mutations", () => {
           Cookie: cookie,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ device_code: start.device_code }),
+        body: JSON.stringify({ user_code: start.user_code }),
       }),
       env
     );

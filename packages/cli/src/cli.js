@@ -19,6 +19,27 @@ import {
 
 const CLI = "securepublish-cli";
 
+/** Sarah-final CLI login copy. Swap these strings only. */
+const LOGIN_PROMPT = {
+  pt: [
+    "Pra ligar este computador à sua conta, abra {url} e digite o código {user_code}.",
+    "Só digite se foi você que rodou este comando agora.",
+  ],
+  en: [
+    "To connect this computer to your account, open {url} and enter the code {user_code}.",
+    "Only enter it if you just ran this command yourself.",
+  ],
+};
+
+const LOGOUT_KEEP_LOCAL = {
+  pt: "Não consegui desligar a conta agora. Ela continua ligada nesta máquina. Tente de novo em instantes.",
+  en: "Couldn't sign out right now. This machine is still signed in. Try again in a moment.",
+};
+
+function cliLang(flags) {
+  return flags?.lang === "en" ? "en" : "pt";
+}
+
 const HELP = `
 ${CLI} — publish AI HTML dashboards behind company SSO
 
@@ -247,17 +268,22 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function cmdLogin(cfg) {
+async function cmdLogin(cfg, flags = {}) {
   const apiBase = apiBaseOf(cfg);
   const startRes = await fetch(`${apiBase}/api/device/code`, {
     method: "POST",
     headers: { accept: "application/json" },
   });
   const start = await startRes.json().catch(() => ({}));
-  if (!startRes.ok || !start.verification_url || !start.device_code) {
+  if (!startRes.ok || !start.verification_url || !start.device_code || !start.user_code) {
     throw new Error("Não consegui abrir o login agora. Tenta de novo em instantes.");
   }
-  console.log(start.verification_url);
+  const lang = cliLang(flags);
+  const [line1, line2] = LOGIN_PROMPT[lang];
+  console.log(
+    line1.replace("{url}", start.verification_url).replace("{user_code}", start.user_code)
+  );
+  console.log(line2);
   openLoginUrl(start.verification_url);
   const interval = Math.max(1, Number(start.interval) || 2) * 1000;
   const deadline = Date.now() + (Number(start.expires_in) || 600) * 1000;
@@ -289,17 +315,27 @@ async function cmdLogin(cfg) {
   throw new Error("Não consegui ligar a conta agora. Tenta de novo em instantes.");
 }
 
-async function cmdLogout(cfg) {
+async function cmdLogout(cfg, flags = {}) {
+  const lang = cliLang(flags);
   const session = readPublishSession();
   if (session?.publishToken) {
     const apiBase = (session.apiBase || apiBaseOf(cfg)).replace(/\/$/, "");
+    let status;
     try {
-      await fetch(`${apiBase}/api/session/revoke`, {
+      const res = await fetch(`${apiBase}/api/session/revoke`, {
         method: "POST",
         headers: { authorization: `Bearer ${session.publishToken}`, accept: "application/json" },
       });
+      status = res.status;
     } catch {
-      /* still drop the local file */
+      console.log(LOGOUT_KEEP_LOCAL[lang]);
+      process.exitCode = 1;
+      return;
+    }
+    if (!((status >= 200 && status < 300) || status === 401)) {
+      console.log(LOGOUT_KEEP_LOCAL[lang]);
+      process.exitCode = 1;
+      return;
     }
   }
   clearPublishSession();
@@ -837,10 +873,10 @@ export async function main(argv) {
 
   switch (cmd) {
     case "login":
-      await cmdLogin(cfg);
+      await cmdLogin(cfg, args.flags);
       break;
     case "logout":
-      await cmdLogout(cfg);
+      await cmdLogout(cfg, args.flags);
       break;
     case "publish":
       await cmdPublish(args._[1], args.flags, cfg);

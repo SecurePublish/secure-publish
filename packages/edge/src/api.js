@@ -36,7 +36,7 @@ import {
   panelPath,
   storedPanelName,
   createDeviceCode,
-  approveDeviceCode,
+  bindDeviceByUserCode,
   pollDeviceCode,
   userFromPublishToken,
   revokePublishToken,
@@ -567,11 +567,12 @@ async function handlePatchAccess(request, env, panelId, { email }) {
 
 async function handleDeviceCode(request, env) {
   const created = await createDeviceCode(env.PANELS);
-  const origin = new URL(request.url).origin;
+  const host = apiHost(env);
   return json(
     {
       device_code: created.device_code,
-      verification_url: `${origin}/auth/google?device=${created.device_code}`,
+      user_code: created.user_code,
+      verification_url: `https://${host}/device`,
       expires_in: created.expires_in,
       interval: created.interval,
     },
@@ -613,7 +614,7 @@ async function handleDeviceBind(request, env, { email }) {
   } catch {
     return err("invalid_json", 400, request, env);
   }
-  const result = await approveDeviceCode(env.PANELS, body?.device_code, email);
+  const result = await bindDeviceByUserCode(env.PANELS, body?.user_code, email);
   if (!result.ok) return err(result.error || "error", result.status || 400, request, env);
   return json({ ok: true }, 200, request, env);
 }

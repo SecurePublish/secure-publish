@@ -13,7 +13,7 @@
  */
 
 import { jwtVerify, createRemoteJWKSet } from "jose";
-import { approveDeviceCode, getTenant } from "./kv.js";
+import { getTenant } from "./kv.js";
 import {
   isCustomCustomerHost,
   isOwnZoneHost,
@@ -437,10 +437,6 @@ export async function handleAuthRoutes(request, env) {
     return loginPage(url, env);
   }
 
-  if (url.pathname === "/_auth/device/done" || url.pathname === "/_auth/device/done/") {
-    return deviceDonePage(url.searchParams.get("retry") !== "1");
-  }
-
   const cb = url.pathname.match(/^\/_auth\/callback\/(google|github|microsoft)\/?$/);
   if (cb) {
     return oauthCallback(request, env, cb[1]);
@@ -466,8 +462,6 @@ function escapeHtml(s) {
 /** @param {URL} url @param {Record<string, string | undefined>} env */
 function loginPage(url, env) {
   const returnTo = url.searchParams.get("return_to") || "/";
-  const device = url.searchParams.get("device") || "";
-  const deviceQs = /^[a-f0-9]{64}$/.test(device) ? `&device=${device}` : "";
   const en = url.searchParams.get("lang") === "en";
   const copy = en
     ? {
@@ -490,7 +484,7 @@ function loginPage(url, env) {
   const links = [];
   for (const [name, cfg] of Object.entries(PROVIDERS)) {
     if (env[cfg.idEnv] && env[cfg.secretEnv]) {
-      const href = `/_auth/start/${name}?return_to=${encodeURIComponent(returnTo)}${deviceQs}`;
+      const href = `/_auth/start/${name}?return_to=${encodeURIComponent(returnTo)}`;
       const label =
         name === "google" ? copy.google : copy.other(labelProvider(name));
       const icon =
@@ -634,13 +628,11 @@ function oauthStart(url, env, provider) {
     return new Response(`Provedor ${provider} não configurado.\n`, { status: 503 });
   }
   const returnTo = url.searchParams.get("return_to") || url.searchParams.get("next") || "/";
-  const device = url.searchParams.get("device") || "";
   // Always use the canonical callback host so Set-Cookie can set
   // Domain=.securepublish.work (panel hosts share that cookie). Starting OAuth
   // on wise.* or workers.dev must not mint a host-only cookie on that host.
   const redirectUri = oauthRedirectUri(env, provider);
   const stateBody = { returnTo, provider, n: crypto.randomUUID() };
-  if (/^[a-f0-9]{64}$/.test(device)) stateBody.device = device;
   const state = encodeState(stateBody);
 
   const params = new URLSearchParams({
@@ -663,7 +655,6 @@ function oauthStart(url, env, provider) {
       : `/_auth/start/${provider}`;
     const bounce = new URL(startPath, canonical + "/");
     bounce.searchParams.set("return_to", returnTo);
-    if (stateBody.device) bounce.searchParams.set("device", stateBody.device);
     return Response.redirect(bounce.toString(), 302);
   }
 
@@ -745,17 +736,7 @@ async function oauthCallback(request, env, provider) {
     mintUrl
   );
 
-  let location = await safeReturnTo(state.returnTo, env);
-  if (state.device && /^[a-f0-9]{64}$/.test(state.device)) {
-    let linked = false;
-    try {
-      const approved = await approveDeviceCode(env.PANELS, state.device, email);
-      linked = Boolean(approved?.ok);
-    } catch {
-      linked = false;
-    }
-    location = linked ? "/_auth/device/done" : "/_auth/device/done?retry=1";
-  }
+  const location = await safeReturnTo(state.returnTo, env);
 
   const headers = new Headers({ location });
   // Kill host-only zombies on app.* so the Domain-scoped cookie is authoritative
@@ -773,32 +754,6 @@ async function oauthCallback(request, env, provider) {
   return new Response(null, {
     status: 302,
     headers,
-  });
-}
-
-function deviceDonePage(ok) {
-  const retry = !ok;
-  const title = retry ? "Não consegui ligar agora" : "Conta ligada";
-  const lede = retry
-    ? "Volta e tenta de novo em instantes."
-    : "Pode fechar esta aba.";
-  const html = `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>${title}</title>
-</head>
-<body style="font-family:Georgia,serif;background:#F3EFE9;color:#292524;margin:0">
-<main style="max-width:32rem;margin:4rem auto;padding:0 1.25rem">
-<h1 style="font-weight:600">${title}</h1>
-<p>${lede}</p>
-</main>
-</body>
-</html>`;
-  return new Response(html, {
-    status: 200,
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
   });
 }
 
@@ -854,9 +809,23 @@ function defaultReturnTo(env) {
   return allowed.length ? allowed[0] + "/" : "/";
 }
 
+/** Same-host console device page: /device or /app/device (optional trailing slash). */
+function isAppDeviceReturnPath(path) {
+  if (!isSafeRelativeReturn(path)) return false;
+  let pathname;
+  try {
+    pathname = new URL(path, "https://x.invalid").pathname;
+  } catch {
+    return false;
+  }
+  const bare = pathname.replace(/\/+$/, "") || "/";
+  return bare === "/device" || bare === "/app/device";
+}
+
 /**
  * Login `next` / `return_to`.
  * Relative paths (no //, no backslash) remap to CONSOLE_ORIGIN.
+ * `/device` and `/app/device` stay on the app host (oauth callback origin).
  * Absolute https URLs: CONSOLE_ORIGIN, or *.securepublish.work / apex, or a
  * customer hostname that exact-matches KV after claim normalization with
  * customVerified:true AND status active. No suffix/substring matching for
@@ -865,6 +834,13 @@ function defaultReturnTo(env) {
 export async function safeReturnTo(path, env) {
   if (!path || typeof path !== "string") return defaultReturnTo(env);
   const allowed = consoleOrigins(env);
+  if (isAppDeviceReturnPath(path)) {
+    try {
+      return new URL(path, oauthCallbackOrigin(env) + "/").toString();
+    } catch {
+      return `${oauthCallbackOrigin(env)}/device`;
+    }
+  }
   if (isSafeRelativeReturn(path)) {
     if (allowed.length) {
       try {
