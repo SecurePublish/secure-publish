@@ -116,6 +116,31 @@ describe("assertPanelHostBinding — unit", () => {
     assert.equal(r.ok, true);
   });
 
+  it("same-org publisher on the org subdomain → ok", async () => {
+    const env = {
+      PANELS: memoryKv({ "host:sub:furk": "clovis@furk.tech" }),
+    };
+    const r = await assertPanelHostBinding(
+      req("https://furk.securepublish.work/" + PANEL_ID, "furk.securepublish.work"),
+      env,
+      panelRecord("x@furk.tech")
+    );
+    assert.equal(r.ok, true);
+  });
+
+  it("same blocked public domain does not share a subdomain lock", async () => {
+    const env = {
+      PANELS: memoryKv({ "host:sub:gmailpub": "ana@gmail.com" }),
+    };
+    const r = await assertPanelHostBinding(
+      req("https://gmailpub.securepublish.work/" + PANEL_ID, "gmailpub.securepublish.work"),
+      env,
+      panelRecord("bob@gmail.com")
+    );
+    assert.equal(r.ok, false);
+    assert.equal(r.status, 404);
+  });
+
   it("custom host: publisher must match host:custom lock", async () => {
     const env = {
       PANELS: memoryKv({ "host:custom:dash.acme.example": "dev@localhost" }),
@@ -134,6 +159,25 @@ describe("assertPanelHostBinding — unit", () => {
     );
     assert.equal(bad.ok, false);
     assert.equal(bad.status, 404);
+  });
+
+  it("custom host stays strict per email even for the same org", async () => {
+    const env = {
+      PANELS: memoryKv({ "host:custom:share.furk.tech": "clovis@furk.tech" }),
+    };
+    const owner = await assertPanelHostBinding(
+      req("https://share.furk.tech/" + PANEL_ID, "share.furk.tech"),
+      env,
+      panelRecord("clovis@furk.tech")
+    );
+    assert.equal(owner.ok, true);
+    const teammate = await assertPanelHostBinding(
+      req("https://share.furk.tech/" + PANEL_ID, "share.furk.tech"),
+      env,
+      panelRecord("x@furk.tech")
+    );
+    assert.equal(teammate.ok, false);
+    assert.equal(teammate.status, 404);
   });
 
   it("legacy panel without publisherEmail → deny on bound host", async () => {

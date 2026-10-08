@@ -129,6 +129,32 @@ describe("ensureAutoHost", () => {
     assert.equal(subdomainKeys(kv).length, 0);
   });
 
+  it("cross-org lock steal after attach retries -N or clears the tenant", async () => {
+    const base = memoryKv();
+    let stealFurk = false;
+    const kv = {
+      async get(key) {
+        if (key === "host:sub:furk" && stealFurk) return "other@evil.example";
+        return base.get(key);
+      },
+      async put(key, value, options) {
+        const r = await base.put(key, value, options);
+        if (key === "host:sub:furk") stealFurk = true;
+        return r;
+      },
+      async delete(key) {
+        return base.delete(key);
+      },
+      _store: base._store,
+    };
+    await ensureOrgMembership(kv, CLOVIS);
+    const tenant = await getTenant(base, CLOVIS);
+    assert.equal(tenant.slug, "furk-2");
+    assert.equal(tenant.host, "furk-2.securepublish.work");
+    assert.equal(await base.get("host:sub:furk-2"), CLOVIS);
+    assert.equal(await kv.get("orghost:furk.tech"), "furk-2");
+  });
+
   it("concurrent assignment for the same org yields a single host", async () => {
     const base = memoryKv();
     const kv = delayKv(base);
@@ -199,5 +225,83 @@ describe("GET /api/me lazy auto-host", () => {
     const published = await pub.json();
     assert.equal(published.host, "furk.securepublish.work");
     assert.match(published.url, /^https:\/\/furk\.securepublish\.work\//);
+  });
+});
+
+describe("org subdomain host binding", () => {
+  it("2nd furk.tech member publishes and the panel opens on the org host", async () => {
+    const kv = memoryKv();
+    await ensureOrgMembership(kv, CLOVIS);
+    await ensureOrgMembership(kv, TEAMMATE);
+    assert.equal(await kv.get("host:sub:furk"), CLOVIS);
+    assert.equal((await getTenant(kv, TEAMMATE)).host, "furk.securepublish.work");
+
+    const env = oauthEnv(kv);
+    const cookie = await sessionCookie(env, TEAMMATE);
+    const pub = await worker.fetch(
+      new Request(`${APP}/api/panels`, {
+        method: "POST",
+        headers: {
+          Origin: APP,
+          Cookie: cookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ html: "<html>teammate</html>" }),
+      }),
+      env
+    );
+    assert.equal(pub.status, 201);
+    const published = await pub.json();
+    assert.equal(published.host, "furk.securepublish.work");
+
+    const view = await worker.fetch(
+      new Request(`https://furk.securepublish.work/${published.id}`, {
+        headers: { Host: "furk.securepublish.work", Cookie: cookie },
+      }),
+      env
+    );
+    assert.equal(view.status, 200);
+    assert.equal(await view.text(), "<html>teammate</html>");
+  });
+
+  it("another org pointing tenant.host at the same slug still gets 404", async () => {
+    const OTHER = "ana@wises.com.br";
+    const kv = memoryKv();
+    await ensureOrgMembership(kv, CLOVIS);
+    await kv.put(
+      `tenant:user:${OTHER}`,
+      JSON.stringify({
+        email: OTHER,
+        domain: "wises.com.br",
+        slug: "furk",
+        host: "furk.securepublish.work",
+      })
+    );
+    const env = oauthEnv(kv);
+    const cookie = await sessionCookie(env, OTHER);
+    const pub = await worker.fetch(
+      new Request(`${APP}/api/panels`, {
+        method: "POST",
+        headers: {
+          Origin: APP,
+          Cookie: cookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ html: "<html>stolen</html>" }),
+      }),
+      env
+    );
+    assert.equal(pub.status, 201);
+    const published = await pub.json();
+    assert.equal(published.host, "furk.securepublish.work");
+
+    const view = await worker.fetch(
+      new Request(`https://furk.securepublish.work/${published.id}`, {
+        headers: { Host: "furk.securepublish.work", Cookie: cookie },
+      }),
+      env
+    );
+    assert.equal(view.status, 404);
+    assert.match(await view.text(), /host not bound/i);
   });
 });

@@ -354,7 +354,8 @@ export async function putTenant(kv, tenant) {
  *
  * Required: app, www, cname, api, admin, auth, login.
  * Extra infra (short): mail/smtp (MX impersonation), status (status page),
- * docs (first-party docs), static/assets/cdn (asset hosts).
+ * docs (first-party docs), static/assets/cdn (asset hosts),
+ * securepublish/sso/support/billing/security (product/infra).
  * Not listed: wise (production tenant), demo (documented interim tenant).
  * `_auth` sanitizes to `auth` (underscores stripped).
  */
@@ -373,6 +374,11 @@ export const CLAIM_RESERVED_SLUGS = new Set([
   "static",
   "assets",
   "cdn",
+  "securepublish",
+  "sso",
+  "support",
+  "billing",
+  "security",
 ]);
 
 const AUTO_HOST_SUFFIX_CAP = 32;
@@ -413,14 +419,32 @@ function autoHostCandidates(base) {
   return out;
 }
 
+async function hostSubLock(kv, slug) {
+  return String((await kv.get(`host:sub:${slug}`)) || "")
+    .trim()
+    .toLowerCase();
+}
+
+function lockOwnedByOrg(lock, domain) {
+  const d = normalizeEmailDomain(lock);
+  return Boolean(lock && d && d === domain);
+}
+
+async function clearTenantHost(kv, email) {
+  const prev = await getTenant(kv, email);
+  if (!prev) return prev;
+  const next = { ...prev, email };
+  delete next.slug;
+  delete next.host;
+  return putTenant(kv, next);
+}
+
 async function attachHostToTenant(kv, email, slug) {
   const owner = String(email || "").trim().toLowerCase();
   const claimed = await claimSubdomain(kv, slug, owner);
   if (claimed.ok) return claimed.tenant;
   if (claimed.error !== "subdomain_taken") return getTenant(kv, owner);
-  const lock = String((await kv.get(`host:sub:${slug}`)) || "")
-    .trim()
-    .toLowerCase();
+  const lock = await hostSubLock(kv, slug);
   if (!lock || normalizeEmailDomain(lock) !== normalizeEmailDomain(owner)) {
     return getTenant(kv, owner);
   }
@@ -431,6 +455,16 @@ async function attachHostToTenant(kv, email, slug) {
     slug,
     host: `${slug}.securepublish.work`,
   });
+}
+
+/** Attach, then re-read the lock so a cross-org steal cannot stick. */
+async function attachAndVerify(kv, email, slug, domain) {
+  const tenant = await attachHostToTenant(kv, email, slug);
+  if (!tenantAlreadyHasHost(tenant)) return tenant;
+  const used = sanitizeSubdomainSlug(tenant.slug);
+  const lock = await hostSubLock(kv, used);
+  if (lockOwnedByOrg(lock, domain)) return tenant;
+  return clearTenantHost(kv, email);
 }
 
 async function pickAutoHostSlug(kv, domain, email) {
@@ -487,24 +521,22 @@ export async function ensureAutoHost(kv, email) {
       if (won) slug = won;
     }
 
-    let tenant = await attachHostToTenant(kv, e, slug);
+    let tenant = await attachAndVerify(kv, e, slug, domain);
     if (tenantAlreadyHasHost(tenant)) return tenant;
 
     const coordNow = sanitizeSubdomainSlug(await kv.get(coordKey));
     if (coordNow && coordNow !== slug) {
-      tenant = await attachHostToTenant(kv, e, coordNow);
+      tenant = await attachAndVerify(kv, e, coordNow, domain);
       if (tenantAlreadyHasHost(tenant)) return tenant;
     }
 
     for (const trial of autoHostCandidates(autoHostLabel(domain))) {
       if (trial === slug || trial === coordNow) continue;
-      const lock = String((await kv.get(`host:sub:${trial}`)) || "")
-        .trim()
-        .toLowerCase();
+      const lock = await hostSubLock(kv, trial);
       if (lock && lock !== e && normalizeEmailDomain(lock) !== domain) continue;
       await kv.put(coordKey, trial);
       const won = sanitizeSubdomainSlug(await kv.get(coordKey)) || trial;
-      tenant = await attachHostToTenant(kv, e, won);
+      tenant = await attachAndVerify(kv, e, won, domain);
       if (tenantAlreadyHasHost(tenant)) return tenant;
     }
     return getTenant(kv, e);
