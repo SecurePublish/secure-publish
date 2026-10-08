@@ -13,6 +13,7 @@
  *
  * Org (email-domain tenant; created on first verified work-email sign-in):
  *   org:{domain}              → { v, domain, createdBy, createdAt }
+ *   orghost:{domain}          → slug (self-service auto-subdomain coordinator)
  *
  * Tenant hosting (per signed-in user):
  *   tenant:user:{email}       → { email, domain, host, slug?, customHostname?, customVerified?,
@@ -26,7 +27,34 @@
  *   new panels = 10-char Crockford/RFC4648 base32; legacy = 24-hex.
  */
 
-import { normalizeEmails, normalizeDomains, normalizeEmailDomain } from "./acl.js";
+import { parse } from "tldts";
+import {
+  isBlockedSignupDomain,
+  normalizeEmails,
+  normalizeDomains,
+  normalizeEmailDomain,
+} from "./acl.js";
+
+const TLDTS_OPTS = {
+  allowIcannDomains: true,
+  allowPrivateDomains: false,
+  detectIp: true,
+  extractHostname: false,
+  validateHostname: true,
+};
+
+/** Same sanitizer as PUT /api/hosting/subdomain. */
+export function sanitizeSubdomainSlug(slug) {
+  return String(slug || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/^-+|-+$/g, "");
+}
+
+function slugMeetsClaimLength(s) {
+  return Boolean(s) && s.length >= 2 && s.length <= 63;
+}
 
 /** Lowercase RFC 4648 base32 alphabet (no padding). */
 export const PANEL_CODE_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
@@ -283,6 +311,7 @@ export async function ensureOrgMembership(kv, email) {
     email: e,
     domain,
   });
+  await ensureAutoHost(kv, e);
   return { ok: true, org, created };
 }
 
@@ -346,13 +375,147 @@ export const CLAIM_RESERVED_SLUGS = new Set([
   "cdn",
 ]);
 
-export async function claimSubdomain(kv, slug, email) {
-  const s = String(slug || "")
+const AUTO_HOST_SUFFIX_CAP = 32;
+
+export function orgHostKvKey(domain) {
+  const d = normalizeEmailDomain(domain);
+  return d ? `orghost:${d}` : "";
+}
+
+/**
+ * First label of the registrable (PSL) domain: furk.tech → furk,
+ * empresa1.com.br → empresa1, mail.acme.co.uk → acme.
+ */
+export function autoHostLabel(emailOrDomain) {
+  const domain = normalizeEmailDomain(emailOrDomain);
+  if (!domain || domain === "localhost") return "";
+  const parsed = parse(domain, TLDTS_OPTS);
+  const registrable = String(parsed.domain || "").toLowerCase();
+  if (!registrable) return "";
+  return sanitizeSubdomainSlug(registrable.split(".")[0] || "");
+}
+
+function tenantAlreadyHasHost(tenant) {
+  if (!tenant) return false;
+  return Boolean(String(tenant.slug || "").trim() || String(tenant.host || "").trim());
+}
+
+function autoHostCandidates(base) {
+  const b = sanitizeSubdomainSlug(base);
+  if (!b) return [];
+  const out = [];
+  if (slugMeetsClaimLength(b) && !CLAIM_RESERVED_SLUGS.has(b)) out.push(b);
+  for (let n = 2; n <= AUTO_HOST_SUFFIX_CAP; n++) {
+    const s = `${b}-${n}`;
+    if (s.length > 63) break;
+    if (slugMeetsClaimLength(s) && !CLAIM_RESERVED_SLUGS.has(s)) out.push(s);
+  }
+  return out;
+}
+
+async function attachHostToTenant(kv, email, slug) {
+  const owner = String(email || "").trim().toLowerCase();
+  const claimed = await claimSubdomain(kv, slug, owner);
+  if (claimed.ok) return claimed.tenant;
+  if (claimed.error !== "subdomain_taken") return getTenant(kv, owner);
+  const lock = String((await kv.get(`host:sub:${slug}`)) || "")
     .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "")
-    .replace(/^-+|-+$/g, "");
-  if (!s || s.length < 2 || s.length > 63) {
+    .toLowerCase();
+  if (!lock || normalizeEmailDomain(lock) !== normalizeEmailDomain(owner)) {
+    return getTenant(kv, owner);
+  }
+  const prev = await getTenant(kv, owner);
+  return putTenant(kv, {
+    ...(prev || {}),
+    email: owner,
+    slug,
+    host: `${slug}.securepublish.work`,
+  });
+}
+
+async function pickAutoHostSlug(kv, domain, email) {
+  const orgDomain = normalizeEmailDomain(domain);
+  const owner = String(email || "").trim().toLowerCase();
+  for (const slug of autoHostCandidates(autoHostLabel(domain))) {
+    const lock = String((await kv.get(`host:sub:${slug}`)) || "")
+      .trim()
+      .toLowerCase();
+    if (!lock || lock === owner || normalizeEmailDomain(lock) === orgDomain) {
+      return slug;
+    }
+  }
+  return "";
+}
+
+/**
+ * Give a self-service org `<label>.securepublish.work` when it has no host.
+ *
+ * Concurrency: KV has no CAS. We write deterministic `orghost:{domain}` first
+ * and re-read it; same-org racers converge on that slug, then `claimSubdomain`.
+ * The `host:sub` lock is still last-write-wins — one owner email, not two
+ * slugs. Limits: a different org can still steal the same label in the
+ * check-then-put window (same as a manual Hosting claim); we then try -2…-N
+ * or leave the tenant without a host. Login never fails.
+ *
+ * @returns {Promise<object | null>} tenant after the attempt
+ */
+export async function ensureAutoHost(kv, email) {
+  if (!kv) return null;
+  const e = String(email || "").trim().toLowerCase();
+  const domain = normalizeEmailDomain(e);
+  if (!e.includes("@") || !domain || domain === "localhost") {
+    return e ? getTenant(kv, e) : null;
+  }
+  if (isBlockedSignupDomain(e)) return getTenant(kv, e);
+
+  const prev = await getTenant(kv, e);
+  if (tenantAlreadyHasHost(prev)) return prev;
+
+  const org = await getOrg(kv, domain);
+  if (!org) return prev;
+
+  const coordKey = orgHostKvKey(domain);
+  if (!coordKey) return prev;
+
+  try {
+    let slug = sanitizeSubdomainSlug(await kv.get(coordKey));
+    if (!slug) {
+      slug = await pickAutoHostSlug(kv, domain, e);
+      if (!slug) return prev;
+      await kv.put(coordKey, slug);
+      const won = sanitizeSubdomainSlug(await kv.get(coordKey));
+      if (won) slug = won;
+    }
+
+    let tenant = await attachHostToTenant(kv, e, slug);
+    if (tenantAlreadyHasHost(tenant)) return tenant;
+
+    const coordNow = sanitizeSubdomainSlug(await kv.get(coordKey));
+    if (coordNow && coordNow !== slug) {
+      tenant = await attachHostToTenant(kv, e, coordNow);
+      if (tenantAlreadyHasHost(tenant)) return tenant;
+    }
+
+    for (const trial of autoHostCandidates(autoHostLabel(domain))) {
+      if (trial === slug || trial === coordNow) continue;
+      const lock = String((await kv.get(`host:sub:${trial}`)) || "")
+        .trim()
+        .toLowerCase();
+      if (lock && lock !== e && normalizeEmailDomain(lock) !== domain) continue;
+      await kv.put(coordKey, trial);
+      const won = sanitizeSubdomainSlug(await kv.get(coordKey)) || trial;
+      tenant = await attachHostToTenant(kv, e, won);
+      if (tenantAlreadyHasHost(tenant)) return tenant;
+    }
+    return getTenant(kv, e);
+  } catch {
+    return getTenant(kv, e);
+  }
+}
+
+export async function claimSubdomain(kv, slug, email) {
+  const s = sanitizeSubdomainSlug(slug);
+  if (!slugMeetsClaimLength(s)) {
     return { ok: false, status: 400, error: "invalid_slug" };
   }
   if (CLAIM_RESERVED_SLUGS.has(s)) {
@@ -366,7 +529,11 @@ export async function claimSubdomain(kv, slug, email) {
   }
   const prev = await getTenant(kv, owner);
   if (prev?.slug && prev.slug !== s) {
-    await kv.delete(`host:sub:${prev.slug}`);
+    const oldKey = `host:sub:${prev.slug}`;
+    const oldOwner = await kv.get(oldKey);
+    if (!oldOwner || oldOwner === owner) {
+      await kv.delete(oldKey);
+    }
   }
   await kv.put(lockKey, owner);
   const base = "securepublish.work";

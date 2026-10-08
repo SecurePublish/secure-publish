@@ -182,6 +182,10 @@ describe("self-service signup — Google org create/join", () => {
     assert.equal(await kv.get(orgKvKey("furk.tech")), JSON.stringify(org));
     const firstTenant = JSON.parse(await kv.get(`tenant:user:${CLOVIS}`));
     assert.equal(firstTenant.domain, "furk.tech");
+    assert.equal(firstTenant.slug, "furk");
+    assert.equal(firstTenant.host, "furk.securepublish.work");
+    assert.equal(await kv.get("host:sub:furk"), CLOVIS);
+    assert.equal(await kv.get("orghost:furk.tech"), "furk");
 
     mockGoogle(TEAMMATE, { hd: "furk.tech" });
     const second = await googleCallback(env);
@@ -191,6 +195,9 @@ describe("self-service signup — Google org create/join", () => {
     assert.equal(orgAgain.createdAt, org.createdAt);
     const secondTenant = JSON.parse(await kv.get(`tenant:user:${TEAMMATE}`));
     assert.equal(secondTenant.domain, "furk.tech");
+    assert.equal(secondTenant.slug, "furk");
+    assert.equal(secondTenant.host, "furk.securepublish.work");
+    assert.equal(await kv.get("host:sub:furk"), CLOVIS);
   });
 
   it("denies Google when email_verified/verified_email is not true", async () => {
