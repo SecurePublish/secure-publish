@@ -1,5 +1,5 @@
 /**
- * Ensures agents can run OUR CLI via `npx github:clovistx/secure-publish`
+ * Ensures agents can run OUR CLI via `npx github:SecurePublish/secure-publish`
  * (not the unrelated public npm package named secure-publish).
  * The binary exposed by that install is `securepublish-cli` only.
  * npx does not leave that bin on PATH — docs must use the full npx form.
@@ -15,7 +15,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BIN_NAME = "securepublish-cli";
 const BIN_REL = `./packages/cli/bin/${BIN_NAME}.js`;
 const OUR_HELP_MARKER = `${BIN_NAME} — publish AI HTML dashboards behind company SSO`;
-const GITHUB_NPX = "npx --yes github:clovistx/secure-publish";
+const GITHUB_NPX = "npx --yes github:SecurePublish/secure-publish";
 const GITHUB_NPX_RE = GITHUB_NPX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Bare `securepublish-cli <sub>` as a runnable line (not prose about the bin name). */

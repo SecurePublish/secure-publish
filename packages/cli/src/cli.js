@@ -492,7 +492,7 @@ async function cmdPublish(fileArg, flags, cfg) {
       key,
       value: encodeRecord(record),
     });
-    // Console API indexes (compatible with packages/edge/src/kv.js)
+    // Console API indexes
     if (publisherEmail) {
       await appendKvIndex(cfg, `idx:pub:${publisherEmail}`, key);
       const dom = publisherEmail.split("@")[1];
@@ -714,14 +714,13 @@ async function cmdDoctor(cfg) {
     if (!cfg.kvNamespaceId) {
       lines.push("  3. export SECURE_PUBLISH_KV_NAMESPACE_ID=…  (or wrangler kv namespace list)");
     }
-    lines.push("  Or copy .env.example → .env / ~/.secure-publish/config.json");
+    lines.push("  Or copy .secure-publish.json.example → .secure-publish.json / ~/.secure-publish/config.json");
     lines.push("  Without a token yet: SECURE_PUBLISH_MOCK=1 for local E2E.");
     if (!cfg.baseUrl) {
       lines.push("");
-      lines.push("  Wildcard LIVE — set BASE_URL:");
+      lines.push("  Set BASE_URL:");
       lines.push("    export SECURE_PUBLISH_BASE_URL=https://demo.securepublish.work");
-      lines.push("  Or tenant: https://{slug}.securepublish.work  — docs/DEPLOY-WILDCARD.md");
-      lines.push("  Fallback: https://secure-publish.clovist.workers.dev");
+      lines.push("  Or tenant: https://{slug}.securepublish.work");
     }
   } else {
     lines.push("");
@@ -746,7 +745,6 @@ async function cmdDoctor(cfg) {
   lines.push("  --to = explicit email allowlist.");
   lines.push("  Does NOT check Workspace / Entra / GitHub Org membership.");
   lines.push("  Panel URLs are NOT credentials — SSO session required.");
-  lines.push("  Wildcard *.securepublish.work: LIVE — docs/DEPLOY-WILDCARD.md");
 
   console.log(lines.join("\n"));
   return cfg.mock || missing.length === 0 ? 0 : 1;

@@ -15,13 +15,13 @@ There is no web “publish” button. The console only tracks URLs and views.
 Install the skill (already used by the landing):
 
 ```text
-npx skills add https://github.com/clovistx/secure-publish --skill "secure-publish"
+npx skills add https://github.com/SecurePublish/secure-publish --skill "secure-publish"
 ```
 
 Run the CLI from this repo (not the public npm package named `secure-publish` — that is a different project). Do **not** run `npm install secure-publish`, `npm install -g secure-publish`, or `npx secure-publish`. Use only the full form every time (npx does **not** leave `securepublish-cli` on PATH):
 
 ```bash
-npx --yes github:clovistx/secure-publish <subcommand>
+npx --yes github:SecurePublish/secure-publish <subcommand>
 ```
 
 That runs this repo’s `securepublish-cli` binary for that one invocation (login, publish, help, and the rest).
@@ -39,7 +39,7 @@ User prompts this skill handles:
 
 Say only these lines about sign-in and publish. Do not explain the mechanism.
 
-If this machine is not signed in yet, run `npx --yes github:clovistx/secure-publish login` in the background. Do not wait for it to finish. As soon as it prints the code, say exactly (PT):
+If this machine is not signed in yet, run `npx --yes github:SecurePublish/secure-publish login` in the background. Do not wait for it to finish. As soon as it prints the code, say exactly (PT):
 
 You MUST show the `user_code` from the CLI output to the user (replace `{user_code}`). Do not invent a code.
 
@@ -58,10 +58,10 @@ Use the host the command printed. If there is no host yet, ask where to publish.
 Then publish:
 
 ```bash
-npx --yes github:clovistx/secure-publish publish ./dashboard.html --title "Painel" --name "performance-out-26"
-npx --yes github:clovistx/secure-publish publish ./dashboard.html --to clovis@wises.com.br,ana@wises.com.br --name "performance-out-26"
-npx --yes github:clovistx/secure-publish rename <id-or-url> --name "performance-out-26"
-npx --yes github:clovistx/secure-publish rename <id-or-url> --no-name
+npx --yes github:SecurePublish/secure-publish publish ./dashboard.html --title "Painel" --name "performance-out-26"
+npx --yes github:SecurePublish/secure-publish publish ./dashboard.html --to clovis@wises.com.br,ana@wises.com.br --name "performance-out-26"
+npx --yes github:SecurePublish/secure-publish rename <id-or-url> --name "performance-out-26"
+npx --yes github:SecurePublish/secure-publish rename <id-or-url> --no-name
 ```
 
 **Nome do link**

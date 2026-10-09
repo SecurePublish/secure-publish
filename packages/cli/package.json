@@ -25,6 +25,15 @@
     "sso",
     "securepublish-cli"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SecurePublish/secure-publish.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/SecurePublish/secure-publish",
+  "bugs": {
+    "url": "https://github.com/SecurePublish/secure-publish/issues"
+  },
   "license": "MIT",
   "dependencies": {}
 }

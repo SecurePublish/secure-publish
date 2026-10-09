@@ -2,22 +2,28 @@
   "name": "secure-publish-monorepo",
   "version": "0.1.0",
   "private": true,
-  "description": "Publish AI HTML dashboards behind company SSO (domain allowlist V1)",
+  "description": "CLI and agent skill to publish HTML pages that only your company or listed people can open",
   "workspaces": [
-    "packages/cli",
-    "packages/edge"
+    "packages/cli"
   ],
   "bin": {
     "securepublish-cli": "./packages/cli/bin/securepublish-cli.js"
   },
   "scripts": {
-    "deploy": "npm run deploy -w @secure-publish/edge",
-    "dev:edge": "npm run dev -w @secure-publish/edge",
     "securepublish-cli": "node packages/cli/bin/securepublish-cli.js",
     "doctor": "node packages/cli/bin/securepublish-cli.js doctor",
     "list": "node packages/cli/bin/securepublish-cli.js list",
     "e2e:mock": "node scripts/e2e-mock.mjs",
+    "test": "npm test -w securepublish-cli",
     "test:cli-bin": "node --test test/github-npx-bin.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SecurePublish/secure-publish.git"
+  },
+  "homepage": "https://github.com/SecurePublish/secure-publish",
+  "bugs": {
+    "url": "https://github.com/SecurePublish/secure-publish/issues"
   },
   "engines": {
     "node": ">=20"
