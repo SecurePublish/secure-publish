@@ -31,7 +31,7 @@ User prompts this skill handles:
 - PT: *Publique este dashboard HTML com Secure Publish.*
 - EN: *Publish this HTML dashboard with Secure Publish.*
 - PT: *Publique este HTML pra toda a empresa.*
-- PT: *Publique só para clovis@wises.com.br e ana@wises.com.br.*
+- PT: *Publique só para ana@empresa.com e bia@empresa.com.*
 - EN: *Publish this HTML for the whole company.*
 - EN: *Publish only to jane@acme.com.*
 
@@ -59,7 +59,7 @@ Then publish:
 
 ```bash
 npx --yes github:SecurePublish/secure-publish publish ./dashboard.html --title "Painel" --name "performance-out-26"
-npx --yes github:SecurePublish/secure-publish publish ./dashboard.html --to clovis@wises.com.br,ana@wises.com.br --name "performance-out-26"
+npx --yes github:SecurePublish/secure-publish publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "performance-out-26"
 npx --yes github:SecurePublish/secure-publish rename <id-or-url> --name "performance-out-26"
 npx --yes github:SecurePublish/secure-publish rename <id-or-url> --no-name
 ```
@@ -94,7 +94,7 @@ If the command says the account is not linked, go back to the login line. Never 
 
 | UI label | Command | What it actually checks |
 |----------|---------|-------------------------|
-| Toda a empresa / Whole company | default (no `--to`) | Email **domain** after sign-in. Example: `@wises.com.br`. |
+| Toda a empresa / Whole company | default (no `--to`) | Email **domain** after sign-in. Example: `@empresa.com`. |
 | Só estas pessoas / Only these people | `--to a@x,b@y` | Explicit email list. Still requires sign-in. |
 
 - Same domain as the account is the default when `--to` is omitted.

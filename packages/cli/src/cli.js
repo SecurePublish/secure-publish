@@ -672,9 +672,7 @@ async function cmdDoctor(cfg) {
   lines.push(`Node:                 ${process.version}`);
   lines.push(`mock mode:            ${cfg.mock ? "ON" : "off"}`);
   lines.push(
-    `CLOUDFLARE_API_TOKEN: ${
-      cfg.apiToken ? "set (" + cfg.apiToken.slice(0, 6) + "…)" : "MISSING"
-    }`
+    `CLOUDFLARE_API_TOKEN: ${cfg.apiToken ? "set" : "not set"}`
   );
   lines.push(`CLOUDFLARE_ACCOUNT_ID: ${cfg.accountId || "MISSING"}`);
   lines.push(`kvNamespaceId:        ${cfg.kvNamespaceId || "MISSING"}`);
@@ -705,7 +703,7 @@ async function cmdDoctor(cfg) {
     lines.push("");
     lines.push("Next steps (no secrets in git / chat):");
     if (!cfg.apiToken) {
-      lines.push("  1. Ask John/ops for CLOUDFLARE_API_TOKEN (Workers KV Edit).");
+      lines.push("  1. Ask your administrator for CLOUDFLARE_API_TOKEN (Workers KV Edit).");
       lines.push("     export CLOUDFLARE_API_TOKEN=…   # never commit");
     }
     if (!cfg.accountId) {
@@ -735,7 +733,7 @@ async function cmdDoctor(cfg) {
       }
     } catch (err) {
       lines.push(`Token verify: FAILED — ${err.message}`);
-      lines.push("Next: ask John to rotate/reissue CLOUDFLARE_API_TOKEN (KV Edit scope).");
+      lines.push("Next: ask your administrator to rotate/reissue CLOUDFLARE_API_TOKEN (KV Edit scope).");
     }
   }
 

@@ -105,7 +105,7 @@ describe("CLI device login / logout", () => {
           JSON.stringify({
             access_token: token(),
             token_type: "Bearer",
-            email: "ana@wises.com.br",
+            email: "ana@empresa.com",
             host: "wise.securepublish.work",
             expires_in: 43200,
           }),
@@ -144,7 +144,7 @@ describe("CLI device login / logout", () => {
         JSON.stringify({
           access_token: token(),
           token_type: "Bearer",
-          email: "ana@wises.com.br",
+          email: "ana@empresa.com",
           host: "wise.securepublish.work",
           expires_in: 43200,
         }),
