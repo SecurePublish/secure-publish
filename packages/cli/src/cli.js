@@ -492,7 +492,7 @@ async function cmdPublish(fileArg, flags, cfg) {
       key,
       value: encodeRecord(record),
     });
-    // Console API indexes (compatible with packages/edge/src/kv.js)
+    // Console API indexes
     if (publisherEmail) {
       await appendKvIndex(cfg, `idx:pub:${publisherEmail}`, key);
       const dom = publisherEmail.split("@")[1];
@@ -672,9 +672,7 @@ async function cmdDoctor(cfg) {
   lines.push(`Node:                 ${process.version}`);
   lines.push(`mock mode:            ${cfg.mock ? "ON" : "off"}`);
   lines.push(
-    `CLOUDFLARE_API_TOKEN: ${
-      cfg.apiToken ? "set (" + cfg.apiToken.slice(0, 6) + "…)" : "MISSING"
-    }`
+    `CLOUDFLARE_API_TOKEN: ${cfg.apiToken ? "set" : "not set"}`
   );
   lines.push(`CLOUDFLARE_ACCOUNT_ID: ${cfg.accountId || "MISSING"}`);
   lines.push(`kvNamespaceId:        ${cfg.kvNamespaceId || "MISSING"}`);
@@ -705,7 +703,7 @@ async function cmdDoctor(cfg) {
     lines.push("");
     lines.push("Next steps (no secrets in git / chat):");
     if (!cfg.apiToken) {
-      lines.push("  1. Ask John/ops for CLOUDFLARE_API_TOKEN (Workers KV Edit).");
+      lines.push("  1. Ask your administrator for CLOUDFLARE_API_TOKEN (Workers KV Edit).");
       lines.push("     export CLOUDFLARE_API_TOKEN=…   # never commit");
     }
     if (!cfg.accountId) {
@@ -714,14 +712,13 @@ async function cmdDoctor(cfg) {
     if (!cfg.kvNamespaceId) {
       lines.push("  3. export SECURE_PUBLISH_KV_NAMESPACE_ID=…  (or wrangler kv namespace list)");
     }
-    lines.push("  Or copy .env.example → .env / ~/.secure-publish/config.json");
+    lines.push("  Or copy .secure-publish.json.example → .secure-publish.json / ~/.secure-publish/config.json");
     lines.push("  Without a token yet: SECURE_PUBLISH_MOCK=1 for local E2E.");
     if (!cfg.baseUrl) {
       lines.push("");
-      lines.push("  Wildcard LIVE — set BASE_URL:");
+      lines.push("  Set BASE_URL:");
       lines.push("    export SECURE_PUBLISH_BASE_URL=https://demo.securepublish.work");
-      lines.push("  Or tenant: https://{slug}.securepublish.work  — docs/DEPLOY-WILDCARD.md");
-      lines.push("  Fallback: https://secure-publish.clovist.workers.dev");
+      lines.push("  Or tenant: https://{slug}.securepublish.work");
     }
   } else {
     lines.push("");
@@ -736,7 +733,7 @@ async function cmdDoctor(cfg) {
       }
     } catch (err) {
       lines.push(`Token verify: FAILED — ${err.message}`);
-      lines.push("Next: ask John to rotate/reissue CLOUDFLARE_API_TOKEN (KV Edit scope).");
+      lines.push("Next: ask your administrator to rotate/reissue CLOUDFLARE_API_TOKEN (KV Edit scope).");
     }
   }
 
@@ -746,7 +743,6 @@ async function cmdDoctor(cfg) {
   lines.push("  --to = explicit email allowlist.");
   lines.push("  Does NOT check Workspace / Entra / GitHub Org membership.");
   lines.push("  Panel URLs are NOT credentials — SSO session required.");
-  lines.push("  Wildcard *.securepublish.work: LIVE — docs/DEPLOY-WILDCARD.md");
 
   console.log(lines.join("\n"));
   return cfg.mock || missing.length === 0 ? 0 : 1;

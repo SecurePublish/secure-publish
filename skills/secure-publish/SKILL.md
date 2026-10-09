@@ -15,13 +15,13 @@ There is no web “publish” button. The console only tracks URLs and views.
 Install the skill (already used by the landing):
 
 ```text
-npx skills add https://github.com/clovistx/secure-publish --skill "secure-publish"
+npx skills add https://github.com/SecurePublish/secure-publish --skill "secure-publish"
 ```
 
 Run the CLI from this repo (not the public npm package named `secure-publish` — that is a different project). Do **not** run `npm install secure-publish`, `npm install -g secure-publish`, or `npx secure-publish`. Use only the full form every time (npx does **not** leave `securepublish-cli` on PATH):
 
 ```bash
-npx --yes github:clovistx/secure-publish <subcommand>
+npx --yes github:SecurePublish/secure-publish <subcommand>
 ```
 
 That runs this repo’s `securepublish-cli` binary for that one invocation (login, publish, help, and the rest).
@@ -31,7 +31,7 @@ User prompts this skill handles:
 - PT: *Publique este dashboard HTML com Secure Publish.*
 - EN: *Publish this HTML dashboard with Secure Publish.*
 - PT: *Publique este HTML pra toda a empresa.*
-- PT: *Publique só para clovis@wises.com.br e ana@wises.com.br.*
+- PT: *Publique só para ana@empresa.com e bia@empresa.com.*
 - EN: *Publish this HTML for the whole company.*
 - EN: *Publish only to jane@acme.com.*
 
@@ -39,7 +39,7 @@ User prompts this skill handles:
 
 Say only these lines about sign-in and publish. Do not explain the mechanism.
 
-If this machine is not signed in yet, run `npx --yes github:clovistx/secure-publish login` in the background. Do not wait for it to finish. As soon as it prints the code, say exactly (PT):
+If this machine is not signed in yet, run `npx --yes github:SecurePublish/secure-publish login` in the background. Do not wait for it to finish. As soon as it prints the code, say exactly (PT):
 
 You MUST show the `user_code` from the CLI output to the user (replace `{user_code}`). Do not invent a code.
 
@@ -58,10 +58,10 @@ Use the host the command printed. If there is no host yet, ask where to publish.
 Then publish:
 
 ```bash
-npx --yes github:clovistx/secure-publish publish ./dashboard.html --title "Painel" --name "performance-out-26"
-npx --yes github:clovistx/secure-publish publish ./dashboard.html --to clovis@wises.com.br,ana@wises.com.br --name "performance-out-26"
-npx --yes github:clovistx/secure-publish rename <id-or-url> --name "performance-out-26"
-npx --yes github:clovistx/secure-publish rename <id-or-url> --no-name
+npx --yes github:SecurePublish/secure-publish publish ./dashboard.html --title "Painel" --name "performance-out-26"
+npx --yes github:SecurePublish/secure-publish publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "performance-out-26"
+npx --yes github:SecurePublish/secure-publish rename <id-or-url> --name "performance-out-26"
+npx --yes github:SecurePublish/secure-publish rename <id-or-url> --no-name
 ```
 
 **Nome do link**
@@ -94,7 +94,7 @@ If the command says the account is not linked, go back to the login line. Never 
 
 | UI label | Command | What it actually checks |
 |----------|---------|-------------------------|
-| Toda a empresa / Whole company | default (no `--to`) | Email **domain** after sign-in. Example: `@wises.com.br`. |
+| Toda a empresa / Whole company | default (no `--to`) | Email **domain** after sign-in. Example: `@empresa.com`. |
 | Só estas pessoas / Only these people | `--to a@x,b@y` | Explicit email list. Still requires sign-in. |
 
 - Same domain as the account is the default when `--to` is omitted.
