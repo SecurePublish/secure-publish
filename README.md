@@ -21,13 +21,13 @@ Then ask: *Publish this HTML dashboard with Secure Publish.*
 The bin name is **`securepublish-cli`**. Do **not** `npm install secure-publish` or `npx secure-publish` (unrelated public package). Use the scoped npm package every time (npx does not leave `securepublish-cli` on PATH):
 
 ```bash
-npx --yes @securepublish/cli@1.0.0 login
-npx --yes @securepublish/cli@1.0.0 publish ./dashboard.html --title "Painel" --name "vendas-q3"
-npx --yes @securepublish/cli@1.0.0 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "ops-ana"
-npx --yes @securepublish/cli@1.0.0 rename <id-or-url> --name "vendas-q3"
-npx --yes @securepublish/cli@1.0.0 list
-npx --yes @securepublish/cli@1.0.0 logout
-npx --yes @securepublish/cli@1.0.0 doctor
+npx --yes @securepublish/cli@1.0.1 login
+npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --title "Painel" --name "vendas-q3"
+npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "ops-ana"
+npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --name "vendas-q3"
+npx --yes @securepublish/cli@1.0.1 list
+npx --yes @securepublish/cli@1.0.1 logout
+npx --yes @securepublish/cli@1.0.1 doctor
 ```
 
 - **login** — connect this machine to your company account (browser + one-time code).

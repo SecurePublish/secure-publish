@@ -25,7 +25,7 @@ npx skills add https://github.com/SecurePublish/secure-publish --skill "secure-p
 Run the CLI with the scoped npm package (not the public npm package named `secure-publish` — that is a different project). Do **not** run `npm install secure-publish`, `npm install -g secure-publish`, or `npx secure-publish`. Use only the full form every time (npx does **not** leave `securepublish-cli` on PATH):
 
 ```bash
-npx --yes @securepublish/cli@1.0.0 <subcommand>
+npx --yes @securepublish/cli@1.0.1 <subcommand>
 ```
 
 That runs this repo’s `securepublish-cli` binary for that one invocation (login, publish, help, and the rest).
@@ -43,7 +43,7 @@ User prompts this skill handles:
 
 Say only these lines about sign-in and publish. Do not explain the mechanism.
 
-If this machine is not signed in yet, run `npx --yes @securepublish/cli@1.0.0 login` in the background. Do not wait for it to finish. As soon as it prints the code, say exactly (PT):
+If this machine is not signed in yet, run `npx --yes @securepublish/cli@1.0.1 login` in the background. Do not wait for it to finish. As soon as it prints the code, say exactly (PT):
 
 You MUST show the `user_code` from the CLI output to the user (replace `{user_code}`). Do not invent a code.
 
@@ -62,10 +62,10 @@ Use the host the command printed. If there is no host yet, ask where to publish.
 Then publish:
 
 ```bash
-npx --yes @securepublish/cli@1.0.0 publish ./dashboard.html --title "Painel" --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.0 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.0 rename <id-or-url> --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.0 rename <id-or-url> --no-name
+npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --title "Painel" --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --no-name
 ```
 
 **Nome do link**

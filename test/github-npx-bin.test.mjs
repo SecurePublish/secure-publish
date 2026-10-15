@@ -1,5 +1,5 @@
 /**
- * Ensures agents can run OUR CLI via `npx --yes @securepublish/cli@1.0.0`
+ * Ensures agents can run OUR CLI via `npx --yes @securepublish/cli@1.0.1`
  * (not the unrelated public npm package named secure-publish).
  * The binary exposed by that install is `securepublish-cli` only.
  * npx does not leave that bin on PATH — docs must use the full npx form.
@@ -14,12 +14,13 @@ import { describe, it } from "node:test";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BIN_NAME = "securepublish-cli";
 const PKG_NAME = "@securepublish/cli";
-const PKG_VERSION = "1.0.0";
-const BIN_REL = `./packages/cli/bin/${BIN_NAME}.cjs`;
+const PKG_VERSION = "1.0.1";
+const BIN_REL = `packages/cli/bin/${BIN_NAME}.cjs`;
 const OUR_HELP_MARKER = `${BIN_NAME} — publish AI HTML dashboards behind company SSO`;
 const NPM_NPX = `npx --yes ${PKG_NAME}@${PKG_VERSION}`;
 const NPM_NPX_RE = NPM_NPX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const GITHUB_HTTPS = "https://github.com/SecurePublish/secure-publish";
+const NPM_REPO_URL = "git+https://github.com/SecurePublish/secure-publish.git";
 const GITHUB_CLI_NPX = "npx --yes github:SecurePublish/secure-publish";
 
 /** Bare `securepublish-cli <sub>` as a runnable line (not prose about the bin name). */
@@ -47,7 +48,7 @@ describe("root package exposes CLI for npm", () => {
     assert.ok(pkg.files.some((f) => String(f).includes("packages/cli/bin")));
     assert.ok(pkg.files.some((f) => String(f).includes("packages/cli/src")));
     assert.deepEqual(pkg.publishConfig, { access: "public", provenance: true });
-    assert.equal(pkg.repository.url, GITHUB_HTTPS);
+    assert.equal(pkg.repository.url, NPM_REPO_URL);
   });
 
   it("packages/cli exposes the same scoped name and single bin (no sp / secure-publish alias)", () => {
@@ -59,7 +60,7 @@ describe("root package exposes CLI for npm", () => {
     assert.deepEqual(Object.keys(pkg.bin || {}), [BIN_NAME]);
     assert.equal(pkg.bin[BIN_NAME], `./bin/${BIN_NAME}.cjs`);
     assert.match(String(pkg.engines?.node || ""), />=20/);
-    assert.equal(pkg.repository.url, GITHUB_HTTPS);
+    assert.equal(pkg.repository.url, NPM_REPO_URL);
   });
 
   it("resolved bin prints our CLI help (not artelydev/secure-publish)", () => {
@@ -80,7 +81,7 @@ describe("skill documents npm package invocations only", () => {
     "utf8"
   );
 
-  it("documents full npx @securepublish/cli@1.0.0 form for login and publish", () => {
+  it("documents full npx @securepublish/cli@1.0.1 form for login and publish", () => {
     assert.match(skill, new RegExp(`${NPM_NPX_RE} login`));
     assert.match(skill, new RegExp(`${NPM_NPX_RE} publish`));
   });
@@ -145,7 +146,7 @@ describe("skill documents npm package invocations only", () => {
 describe("README documents npm package invocations", () => {
   const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 
-  it("uses full npx @securepublish/cli@1.0.0 form for runnable CLI examples", () => {
+  it("uses full npx @securepublish/cli@1.0.1 form for runnable CLI examples", () => {
     assert.match(readme, new RegExp(`${NPM_NPX_RE} publish`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} list`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} doctor`));
@@ -188,10 +189,18 @@ describe("README documents npm package invocations", () => {
 });
 
 describe("npm publish workflow uses Trusted Publishing (OIDC)", () => {
-  const workflow = fs.readFileSync(
-    path.join(root, ".github/workflows/publish.yml"),
-    "utf8"
-  );
+  const workflowDir = path.join(root, ".github/workflows");
+  const workflowPath = path.join(workflowDir, "publish.yml");
+  const workflow = fs.readFileSync(workflowPath, "utf8");
+
+  it("is named publish.yml (npm Trusted Publisher requires this exact filename)", () => {
+    const names = fs.readdirSync(workflowDir);
+    assert.ok(names.includes("publish.yml"));
+    assert.deepEqual(
+      names.filter((n) => /^publish\.(yml|yaml)$/i.test(n)),
+      ["publish.yml"]
+    );
+  });
 
   it("triggers on release published and v* tags, with OIDC permissions", () => {
     assert.match(workflow, /release:/);
@@ -204,6 +213,14 @@ describe("npm publish workflow uses Trusted Publishing (OIDC)", () => {
     assert.match(workflow, /npm ci/);
     assert.match(workflow, /npm test/);
     assert.match(workflow, /npm publish --provenance --access public/);
+  });
+
+  it("verifies the git tag matches package.json version before publish", () => {
+    assert.match(workflow, /Verify tag matches package\.json version/);
+    assert.match(workflow, /require\('\.\/package\.json'\)\.version/);
+    assert.match(workflow, /github\.event\.release\.tag_name/);
+    assert.match(workflow, /GITHUB_REF_NAME/);
+    assert.match(workflow, /v\$\{VERSION\}/);
   });
 
   it("does not commit tokens or secret references", () => {
