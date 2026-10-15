@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const bin = path.join(root, "packages/cli/bin/securepublish-cli.js");
+const bin = path.join(root, "packages/cli/bin/securepublish-cli.cjs");
 const outFile = path.join(root, "E2E-MOCK.txt");
 const log = [];
 

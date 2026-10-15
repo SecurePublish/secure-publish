@@ -1,0 +1,45 @@
+name: Publish to npm
+
+on:
+  release:
+    types:
+      - published
+  push:
+    tags:
+      - "v*"
+
+# Trusted Publishing (OIDC) — no npm token is stored in this repository.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      # Node 22 ships npm 10.x; Trusted Publishing needs npm >= 11.5.1.
+      - run: npm install -g "npm@^11.5.1"
+
+      - run: npm ci
+      - run: npm test
+
+      # npm publish uses Trusted Publishing (OIDC). Provenance is attached
+      # with --provenance. There is no NODE_AUTH_TOKEN / NPM_TOKEN in this
+      # workflow: npm exchanges the GitHub OIDC token for a short-lived
+      # publish grant.
+      #
+      # For a first manual publish before the GitHub Actions trusted publisher
+      # is configured on npmjs.com, a granular automation token can be stored
+      # as GitHub Actions secret NODE_AUTH_TOKEN and passed only then as
+      # env.NODE_AUTH_TOKEN (do not commit a token).
+      - run: npm publish --provenance --access public

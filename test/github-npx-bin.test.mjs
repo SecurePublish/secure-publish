@@ -1,5 +1,5 @@
 /**
- * Ensures agents can run OUR CLI via `npx github:SecurePublish/secure-publish`
+ * Ensures agents can run OUR CLI via `npx --yes @securepublish/cli@1.0.0`
  * (not the unrelated public npm package named secure-publish).
  * The binary exposed by that install is `securepublish-cli` only.
  * npx does not leave that bin on PATH — docs must use the full npx form.
@@ -13,38 +13,57 @@ import { describe, it } from "node:test";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BIN_NAME = "securepublish-cli";
-const BIN_REL = `./packages/cli/bin/${BIN_NAME}.js`;
+const PKG_NAME = "@securepublish/cli";
+const PKG_VERSION = "1.0.0";
+const BIN_REL = `./packages/cli/bin/${BIN_NAME}.cjs`;
 const OUR_HELP_MARKER = `${BIN_NAME} — publish AI HTML dashboards behind company SSO`;
-const GITHUB_NPX = "npx --yes github:SecurePublish/secure-publish";
-const GITHUB_NPX_RE = GITHUB_NPX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const NPM_NPX = `npx --yes ${PKG_NAME}@${PKG_VERSION}`;
+const NPM_NPX_RE = NPM_NPX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const GITHUB_HTTPS = "https://github.com/SecurePublish/secure-publish";
+const GITHUB_CLI_NPX = "npx --yes github:SecurePublish/secure-publish";
 
 /** Bare `securepublish-cli <sub>` as a runnable line (not prose about the bin name). */
 const BARE_CLI_RUN =
   /(?:^|\n)\s*(?:`)?securepublish-cli\s+(?:login|publish|logout|list|revoke|doctor|mock-serve|help)\b/;
 
-describe("root package exposes CLI for github npx", () => {
-  it(`root package.json bin.${BIN_NAME} points at packages/cli`, () => {
+describe("root package exposes CLI for npm", () => {
+  it(`root package.json is ${PKG_NAME} with ${BIN_NAME} bin`, () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+    assert.equal(pkg.name, PKG_NAME);
+    assert.equal(pkg.version, PKG_VERSION);
+    assert.notEqual(pkg.private, true);
     assert.equal(
       pkg.bin?.[BIN_NAME],
       BIN_REL,
-      `root must expose ${BIN_NAME} bin for \`${GITHUB_NPX}\``
+      `root must expose ${BIN_NAME} bin for \`${NPM_NPX}\``
     );
     // Single bin so npx can resolve without --package name tricks
     assert.deepEqual(Object.keys(pkg.bin), [BIN_NAME]);
+    // workspaces makes npm 9.2 npx github: run `npx-cli.js install --force`
+    // (silent exit 1). Do not add it back.
+    assert.equal(pkg.workspaces, undefined);
+    assert.match(String(pkg.engines?.node || ""), />=20/);
+    assert.ok(Array.isArray(pkg.files) && pkg.files.length > 0, "files list required for npm pack");
+    assert.ok(pkg.files.some((f) => String(f).includes("packages/cli/bin")));
+    assert.ok(pkg.files.some((f) => String(f).includes("packages/cli/src")));
+    assert.deepEqual(pkg.publishConfig, { access: "public", provenance: true });
+    assert.equal(pkg.repository.url, GITHUB_HTTPS);
   });
 
-  it("packages/cli exposes the same single bin name (no sp / secure-publish alias)", () => {
+  it("packages/cli exposes the same scoped name and single bin (no sp / secure-publish alias)", () => {
     const pkg = JSON.parse(
       fs.readFileSync(path.join(root, "packages/cli/package.json"), "utf8")
     );
-    assert.equal(pkg.name, BIN_NAME);
+    assert.equal(pkg.name, PKG_NAME);
+    assert.equal(pkg.version, PKG_VERSION);
     assert.deepEqual(Object.keys(pkg.bin || {}), [BIN_NAME]);
-    assert.equal(pkg.bin[BIN_NAME], `./bin/${BIN_NAME}.js`);
+    assert.equal(pkg.bin[BIN_NAME], `./bin/${BIN_NAME}.cjs`);
+    assert.match(String(pkg.engines?.node || ""), />=20/);
+    assert.equal(pkg.repository.url, GITHUB_HTTPS);
   });
 
   it("resolved bin prints our CLI help (not artelydev/secure-publish)", () => {
-    const bin = path.join(root, "packages/cli/bin", `${BIN_NAME}.js`);
+    const bin = path.join(root, "packages/cli/bin", `${BIN_NAME}.cjs`);
     const r = spawnSync(process.execPath, [bin, "help"], { encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, new RegExp(OUR_HELP_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -55,18 +74,22 @@ describe("root package exposes CLI for github npx", () => {
   });
 });
 
-describe("skill documents github npx invocations only", () => {
+describe("skill documents npm package invocations only", () => {
   const skill = fs.readFileSync(
     path.join(root, "skills/secure-publish/SKILL.md"),
     "utf8"
   );
 
-  it("documents full npx github: form for login and publish", () => {
-    assert.match(skill, new RegExp(`${GITHUB_NPX_RE} login`));
-    assert.match(skill, new RegExp(`${GITHUB_NPX_RE} publish`));
+  it("documents full npx @securepublish/cli@1.0.0 form for login and publish", () => {
+    assert.match(skill, new RegExp(`${NPM_NPX_RE} login`));
+    assert.match(skill, new RegExp(`${NPM_NPX_RE} publish`));
   });
 
-  it("never documents bare securepublish-cli <subcommand> as a runnable command", () => {
+  it("never documents github: CLI invocations or bare securepublish-cli <subcommand>", () => {
+    assert.doesNotMatch(
+      skill,
+      new RegExp(GITHUB_CLI_NPX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    );
     assert.doesNotMatch(
       skill,
       BARE_CLI_RUN,
@@ -74,8 +97,8 @@ describe("skill documents github npx invocations only", () => {
     );
   });
 
-  it("documents github npx install; warns against the public npm name", () => {
-    assert.match(skill, new RegExp(GITHUB_NPX_RE));
+  it("documents npm install; warns against the public npm name secure-publish", () => {
+    assert.match(skill, new RegExp(NPM_NPX_RE));
     assert.match(
       skill,
       /Do \*\*not\*\* run `npm install secure-publish`.*`npx secure-publish`/
@@ -109,19 +132,31 @@ describe("skill documents github npx invocations only", () => {
     const saySection = skill.split("## What you say")[1]?.split("## Access")[0] ?? "";
     assert.doesNotMatch(saySection, /CLOUDFLARE_API_TOKEN|KV|cookie|device code|session\.json/i);
   });
+
+  it("documents Node 22 LTS in Requisitos", () => {
+    assert.match(skill, /## Requisitos/);
+    assert.match(skill, /Node 22 LTS/);
+    assert.match(skill, /`node -v`/);
+    assert.match(skill, /nodejs\.org/);
+    assert.match(skill, new RegExp(GITHUB_HTTPS.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  });
 });
 
-describe("README documents github npx invocations", () => {
+describe("README documents npm package invocations", () => {
   const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 
-  it("uses full npx github: form for runnable CLI examples", () => {
-    assert.match(readme, new RegExp(`${GITHUB_NPX_RE} publish`));
-    assert.match(readme, new RegExp(`${GITHUB_NPX_RE} list`));
-    assert.match(readme, new RegExp(`${GITHUB_NPX_RE} doctor`));
+  it("uses full npx @securepublish/cli@1.0.0 form for runnable CLI examples", () => {
+    assert.match(readme, new RegExp(`${NPM_NPX_RE} publish`));
+    assert.match(readme, new RegExp(`${NPM_NPX_RE} list`));
+    assert.match(readme, new RegExp(`${NPM_NPX_RE} doctor`));
+    assert.doesNotMatch(
+      readme,
+      new RegExp(GITHUB_CLI_NPX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    );
     assert.doesNotMatch(
       readme,
       BARE_CLI_RUN,
-      "README must not document bare securepublish-cli <subcommand> without npx github:"
+      "README must not document bare securepublish-cli <subcommand> without npx @securepublish/cli"
     );
     assert.doesNotMatch(readme, /(?:^|\n)\s*secure-publish publish\b/);
     assert.doesNotMatch(readme, /(?:^|\n)\s*sp\s+publish\b/);
@@ -140,6 +175,78 @@ describe("README documents github npx invocations", () => {
         /Do \*\*not\*\*|unrelated public package|not the public npm|different project/,
         `must not instruct installing public npm package, got: ${line}`
       );
+    }
+  });
+
+  it("documents Node 22 LTS in Requisitos", () => {
+    assert.match(readme, /## Requisitos/);
+    assert.match(readme, /Node 22 LTS/);
+    assert.match(readme, /`node -v`/);
+    assert.match(readme, /nodejs\.org/);
+    assert.match(readme, new RegExp(GITHUB_HTTPS.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  });
+});
+
+describe("npm publish workflow uses Trusted Publishing (OIDC)", () => {
+  const workflow = fs.readFileSync(
+    path.join(root, ".github/workflows/publish.yml"),
+    "utf8"
+  );
+
+  it("triggers on release published and v* tags, with OIDC permissions", () => {
+    assert.match(workflow, /release:/);
+    assert.match(workflow, /types:\s*\n\s*-\s*published/);
+    assert.match(workflow, /tags:\s*\n\s*-\s*"v\*"/);
+    assert.match(workflow, /contents:\s*read/);
+    assert.match(workflow, /id-token:\s*write/);
+    assert.match(workflow, /node-version:\s*"22"/);
+    assert.match(workflow, /registry-url:\s*"https:\/\/registry\.npmjs\.org"/);
+    assert.match(workflow, /npm ci/);
+    assert.match(workflow, /npm test/);
+    assert.match(workflow, /npm publish --provenance --access public/);
+  });
+
+  it("does not commit tokens or secret references", () => {
+    assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
+    assert.doesNotMatch(workflow, /NPM_TOKEN\s*:/);
+    assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN\s*:/);
+    assert.match(workflow, /NODE_AUTH_TOKEN/);
+  });
+});
+
+describe("repo identity is SecurePublish/secure-publish", () => {
+  const skip = new Set(["node_modules", ".git"]);
+  const hits = [];
+
+  function walk(dir) {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (skip.has(ent.name)) continue;
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        walk(p);
+        continue;
+      }
+      const rel = path.relative(root, p);
+      // This file names the forbidden strings in the assertion.
+      if (rel === "test/github-npx-bin.test.mjs") continue;
+      const text = fs.readFileSync(p, "utf8");
+      if (/clovistx/i.test(text) || /wises\.com\.br/i.test(text)) {
+        hits.push(rel);
+      }
+    }
+  }
+
+  it("has zero clovistx or wises.com.br references", () => {
+    walk(root);
+    assert.deepEqual(hits, []);
+  });
+
+  it("package.json repository/homepage/bugs point at SecurePublish/secure-publish", () => {
+    for (const rel of ["package.json", "packages/cli/package.json"]) {
+      const pkg = JSON.parse(fs.readFileSync(path.join(root, rel), "utf8"));
+      assert.match(pkg.repository.url, /github\.com\/SecurePublish\/secure-publish/);
+      assert.equal(pkg.homepage, GITHUB_HTTPS);
+      assert.equal(pkg.bugs.url, `${GITHUB_HTTPS}/issues`);
     }
   });
 });
