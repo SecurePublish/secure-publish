@@ -21,15 +21,16 @@ Then ask: *Publish this HTML dashboard with Secure Publish.*
 The bin name is **`securepublish-cli`**. Do **not** `npm install secure-publish` or `npx secure-publish` (unrelated public package). Use the scoped npm package every time (npx does not leave `securepublish-cli` on PATH):
 
 ```bash
-npx --yes @securepublish/cli@1.0.1 login
-npx --yes @securepublish/cli@1.0.1 login --finish
-npx --yes @securepublish/cli@1.0.1 login --wait
-npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --title "Painel" --name "vendas-q3"
-npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "ops-ana"
-npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --name "vendas-q3"
-npx --yes @securepublish/cli@1.0.1 list
-npx --yes @securepublish/cli@1.0.1 logout
-npx --yes @securepublish/cli@1.0.1 doctor
+npx --yes @securepublish/cli@1.0.2 login
+npx --yes @securepublish/cli@1.0.2 login --finish
+npx --yes @securepublish/cli@1.0.2 login --wait
+npx --yes @securepublish/cli@1.0.2 publish ./dashboard.html --title "Painel" --name "vendas-q3"
+npx --yes @securepublish/cli@1.0.2 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "ops-ana"
+npx --yes @securepublish/cli@1.0.2 rename <id-or-url> --name "vendas-q3"
+npx --yes @securepublish/cli@1.0.2 revoke <id-or-url>
+npx --yes @securepublish/cli@1.0.2 list
+npx --yes @securepublish/cli@1.0.2 logout
+npx --yes @securepublish/cli@1.0.2 doctor
 ```
 
 Agents: run `login`, show the URL and `user_code` in your own message, then run `login --finish`. Never run `login` through an output-condensing filter or wrapper (for example `rtk` in Claude Code).
@@ -39,6 +40,7 @@ Agents: run `login`, show the URL and `user_code` in your own message, then run 
 - **login --wait** — old blocking behavior (print the code and wait in the same process).
 - **publish** — upload an HTML file. Default access is everyone on your company email domain. `--to` limits it to specific emails.
 - **logout** — disconnect this machine.
+- **revoke** — take a published link down. Accepts the panel id or the full URL. Uses the signed-in account (not Cloudflare credentials). Only the person who published it or the company account owner can remove it. An unknown or already-deleted id is treated as already removed.
 - **list** / **rename** / **doctor** — list published panels, change the link name, or check whether this machine is signed in.
 
 Company-wide means the same email domain as the signed-in account. It is not Google Workspace, Microsoft Entra, or GitHub Org membership.

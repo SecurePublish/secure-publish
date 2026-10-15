@@ -1,5 +1,5 @@
 /**
- * Ensures agents can run OUR CLI via `npx --yes @securepublish/cli@1.0.1`
+ * Ensures agents can run OUR CLI via `npx --yes @securepublish/cli@1.0.2`
  * (not the unrelated public npm package named secure-publish).
  * The binary exposed by that install is `securepublish-cli` only.
  * npx does not leave that bin on PATH — docs must use the full npx form.
@@ -14,7 +14,7 @@ import { describe, it } from "node:test";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BIN_NAME = "securepublish-cli";
 const PKG_NAME = "@securepublish/cli";
-const PKG_VERSION = "1.0.1";
+const PKG_VERSION = "1.0.2";
 const BIN_REL = `packages/cli/bin/${BIN_NAME}.cjs`;
 const OUR_HELP_MARKER = `${BIN_NAME} — publish AI HTML dashboards behind company SSO`;
 const NPM_NPX = `npx --yes ${PKG_NAME}@${PKG_VERSION}`;
@@ -81,10 +81,11 @@ describe("skill documents npm package invocations only", () => {
     "utf8"
   );
 
-  it("documents full npx @securepublish/cli@1.0.1 form for login and publish", () => {
+  it("documents full npx @securepublish/cli@1.0.2 form for login and publish", () => {
     assert.match(skill, new RegExp(`${NPM_NPX_RE} login`));
     assert.match(skill, new RegExp(`${NPM_NPX_RE} login --finish`));
     assert.match(skill, new RegExp(`${NPM_NPX_RE} publish`));
+    assert.match(skill, new RegExp(`${NPM_NPX_RE} revoke`));
   });
 
   it("tells the agent to show the code in its own message and skip output wrappers", () => {
@@ -155,12 +156,13 @@ describe("skill documents npm package invocations only", () => {
 describe("README documents npm package invocations", () => {
   const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 
-  it("uses full npx @securepublish/cli@1.0.1 form for runnable CLI examples", () => {
+  it("uses full npx @securepublish/cli@1.0.2 form for runnable CLI examples", () => {
     assert.match(readme, new RegExp(`${NPM_NPX_RE} login`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} login --finish`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} publish`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} list`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} doctor`));
+    assert.match(readme, new RegExp(`${NPM_NPX_RE} revoke`));
     assert.doesNotMatch(
       readme,
       new RegExp(GITHUB_CLI_NPX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))

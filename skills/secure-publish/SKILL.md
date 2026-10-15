@@ -25,7 +25,7 @@ npx skills add https://github.com/SecurePublish/secure-publish --skill "secure-p
 Run the CLI with the scoped npm package (not the public npm package named `secure-publish` — that is a different project). Do **not** run `npm install secure-publish`, `npm install -g secure-publish`, or `npx secure-publish`. Use only the full form every time (npx does **not** leave `securepublish-cli` on PATH):
 
 ```bash
-npx --yes @securepublish/cli@1.0.1 <subcommand>
+npx --yes @securepublish/cli@1.0.2 <subcommand>
 ```
 
 That runs this repo’s `securepublish-cli` binary for that one invocation (login, publish, help, and the rest).
@@ -38,6 +38,8 @@ User prompts this skill handles:
 - PT: *Publique só para ana@empresa.com e bia@empresa.com.*
 - EN: *Publish this HTML for the whole company.*
 - EN: *Publish only to jane@acme.com.*
+- PT: *Remova este link.* / *Tire este painel do ar.*
+- EN: *Revoke this link.* / *Remove this panel.*
 
 ## What you say
 
@@ -45,7 +47,7 @@ Say only these lines about sign-in and publish. Do not explain the mechanism.
 
 If this machine is not signed in yet, run `login` then `login --finish` as two separate commands. Never run either through an output-condensing filter or wrapper (for example `rtk` in Claude Code): those buffer command output until the process exits, so the user never sees the code. Run the CLI directly.
 
-1. Run `npx --yes @securepublish/cli@1.0.1 login` in the foreground and wait for it to exit (it prints the URL and `user_code`, flushes, then exits 0 immediately). Do not background it.
+1. Run `npx --yes @securepublish/cli@1.0.2 login` in the foreground and wait for it to exit (it prints the URL and `user_code`, flushes, then exits 0 immediately). Do not background it.
 
 2. In **your own message**, show the verification URL and the `user_code` from that CLI output (replace `{user_code}`; do not invent a code or URL). Say exactly (PT):
 
@@ -57,7 +59,7 @@ EN:
 
 > I'll open the sign-in page. Sign in with your company account and enter the code {user_code}.
 
-3. Then run `npx --yes @securepublish/cli@1.0.1 login --finish` (also directly, no output filter/wrapper) and wait for it to complete.
+3. Then run `npx --yes @securepublish/cli@1.0.2 login --finish` (also directly, no output filter/wrapper) and wait for it to complete.
 
 When `login --finish` succeeds, say exactly:
 
@@ -68,10 +70,11 @@ Use the host the command printed. If there is no host yet, ask where to publish.
 Then publish:
 
 ```bash
-npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --title "Painel" --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --no-name
+npx --yes @securepublish/cli@1.0.2 publish ./dashboard.html --title "Painel" --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.2 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.2 rename <id-or-url> --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.2 rename <id-or-url> --no-name
+npx --yes @securepublish/cli@1.0.2 revoke <id-or-url>
 ```
 
 **Nome do link**
@@ -81,6 +84,8 @@ npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --no-name
 - **Quando sai sem nome por ser sensível:** "Publiquei: {link}. Deixei sem nome no link porque o título tem informação sensível. Quer pôr um nome?" / "Published: {link}. I left the name out of the link because the title has sensitive info. Want to add one?"
 - **Depois do `rename`:** "Pronto, o link agora é {link}. O anterior continua funcionando." / "Done, the link is now {link}. The old one still works."
 - **Depois do `rename` com nome vazio:** "Pronto, o link agora é {link}, sem nome." / "Done, the link is now {link}, with no name."
+- **Depois do `revoke`:** "Pronto, o link foi removido." / "Done, the link is gone."
+- **Se o CLI recusar o revoke (403):** say exactly: "only the person who published this link or the company account owner can remove it"
 
 Company-wide means the same email domain as the signed-in account. If they did not say who can see it, ask once:
 
@@ -99,6 +104,8 @@ On any failure, say exactly:
 > Não consegui publicar agora. A conta está ligada em {host}. Tenta de novo em instantes.
 
 If the command says the account is not linked, go back to the login line. Never ask them for an infrastructure secret.
+
+To revoke, pass the published URL or the panel id to `npx --yes @securepublish/cli@1.0.2 revoke <id-or-url>`. The signed-in account is enough; do not ask for Cloudflare credentials. If the CLI says the link is already gone, treat that as success.
 
 ## Access (V1)
 
