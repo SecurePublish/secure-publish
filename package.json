@@ -3,18 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "description": "CLI and agent skill to publish HTML pages that only your company or listed people can open",
-  "workspaces": [
-    "packages/cli"
-  ],
   "bin": {
-    "securepublish-cli": "./packages/cli/bin/securepublish-cli.js"
+    "securepublish-cli": "./packages/cli/bin/securepublish-cli.cjs"
   },
   "scripts": {
-    "securepublish-cli": "node packages/cli/bin/securepublish-cli.js",
-    "doctor": "node packages/cli/bin/securepublish-cli.js doctor",
-    "list": "node packages/cli/bin/securepublish-cli.js list",
+    "securepublish-cli": "node packages/cli/bin/securepublish-cli.cjs",
+    "doctor": "node packages/cli/bin/securepublish-cli.cjs doctor",
+    "list": "node packages/cli/bin/securepublish-cli.cjs list",
     "e2e:mock": "node scripts/e2e-mock.mjs",
-    "test": "npm test -w securepublish-cli",
+    "test": "node --test packages/cli/test/*.test.js",
     "test:cli-bin": "node --test test/github-npx-bin.test.mjs"
   },
   "repository": {

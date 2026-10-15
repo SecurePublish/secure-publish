@@ -12,6 +12,10 @@ description: >-
 
 There is no web “publish” button. The console only tracks URLs and views.
 
+## Requisitos
+
+Node 22 LTS (`node -v`). `npx skills add` needs 22 (verified on v22.23.3; the skills CLI crashes on Node 20). The CLI itself runs on Node 20+. If `node -v` is older, install Node 22 LTS from https://nodejs.org.
+
 Install the skill (already used by the landing):
 
 ```text

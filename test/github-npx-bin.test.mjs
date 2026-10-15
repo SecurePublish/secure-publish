@@ -13,10 +13,11 @@ import { describe, it } from "node:test";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BIN_NAME = "securepublish-cli";
-const BIN_REL = `./packages/cli/bin/${BIN_NAME}.js`;
+const BIN_REL = `./packages/cli/bin/${BIN_NAME}.cjs`;
 const OUR_HELP_MARKER = `${BIN_NAME} — publish AI HTML dashboards behind company SSO`;
 const GITHUB_NPX = "npx --yes github:SecurePublish/secure-publish";
 const GITHUB_NPX_RE = GITHUB_NPX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const GITHUB_HTTPS = "https://github.com/SecurePublish/secure-publish";
 
 /** Bare `securepublish-cli <sub>` as a runnable line (not prose about the bin name). */
 const BARE_CLI_RUN =
@@ -32,6 +33,10 @@ describe("root package exposes CLI for github npx", () => {
     );
     // Single bin so npx can resolve without --package name tricks
     assert.deepEqual(Object.keys(pkg.bin), [BIN_NAME]);
+    // workspaces makes npm 9.2 npx github: run `npx-cli.js install --force`
+    // (silent exit 1). Do not add it back.
+    assert.equal(pkg.workspaces, undefined);
+    assert.match(String(pkg.engines?.node || ""), />=20/);
   });
 
   it("packages/cli exposes the same single bin name (no sp / secure-publish alias)", () => {
@@ -40,11 +45,12 @@ describe("root package exposes CLI for github npx", () => {
     );
     assert.equal(pkg.name, BIN_NAME);
     assert.deepEqual(Object.keys(pkg.bin || {}), [BIN_NAME]);
-    assert.equal(pkg.bin[BIN_NAME], `./bin/${BIN_NAME}.js`);
+    assert.equal(pkg.bin[BIN_NAME], `./bin/${BIN_NAME}.cjs`);
+    assert.match(String(pkg.engines?.node || ""), />=20/);
   });
 
   it("resolved bin prints our CLI help (not artelydev/secure-publish)", () => {
-    const bin = path.join(root, "packages/cli/bin", `${BIN_NAME}.js`);
+    const bin = path.join(root, "packages/cli/bin", `${BIN_NAME}.cjs`);
     const r = spawnSync(process.execPath, [bin, "help"], { encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, new RegExp(OUR_HELP_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -109,6 +115,14 @@ describe("skill documents github npx invocations only", () => {
     const saySection = skill.split("## What you say")[1]?.split("## Access")[0] ?? "";
     assert.doesNotMatch(saySection, /CLOUDFLARE_API_TOKEN|KV|cookie|device code|session\.json/i);
   });
+
+  it("documents Node 22 LTS in Requisitos", () => {
+    assert.match(skill, /## Requisitos/);
+    assert.match(skill, /Node 22 LTS/);
+    assert.match(skill, /`node -v`/);
+    assert.match(skill, /nodejs\.org/);
+    assert.match(skill, new RegExp(GITHUB_HTTPS.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  });
 });
 
 describe("README documents github npx invocations", () => {
@@ -140,6 +154,51 @@ describe("README documents github npx invocations", () => {
         /Do \*\*not\*\*|unrelated public package|not the public npm|different project/,
         `must not instruct installing public npm package, got: ${line}`
       );
+    }
+  });
+
+  it("documents Node 22 LTS in Requisitos", () => {
+    assert.match(readme, /## Requisitos/);
+    assert.match(readme, /Node 22 LTS/);
+    assert.match(readme, /`node -v`/);
+    assert.match(readme, /nodejs\.org/);
+    assert.match(readme, new RegExp(GITHUB_HTTPS.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  });
+});
+
+describe("repo identity is SecurePublish/secure-publish", () => {
+  const skip = new Set(["node_modules", ".git"]);
+  const hits = [];
+
+  function walk(dir) {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (skip.has(ent.name)) continue;
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        walk(p);
+        continue;
+      }
+      const rel = path.relative(root, p);
+      // This file names the forbidden strings in the assertion.
+      if (rel === "test/github-npx-bin.test.mjs") continue;
+      const text = fs.readFileSync(p, "utf8");
+      if (/clovistx/i.test(text) || /wises\.com\.br/i.test(text)) {
+        hits.push(rel);
+      }
+    }
+  }
+
+  it("has zero clovistx or wises.com.br references", () => {
+    walk(root);
+    assert.deepEqual(hits, []);
+  });
+
+  it("package.json repository/homepage/bugs point at SecurePublish/secure-publish", () => {
+    for (const rel of ["package.json", "packages/cli/package.json"]) {
+      const pkg = JSON.parse(fs.readFileSync(path.join(root, rel), "utf8"));
+      assert.match(pkg.repository.url, /github\.com\/SecurePublish\/secure-publish/);
+      assert.equal(pkg.homepage, GITHUB_HTTPS);
+      assert.equal(pkg.bugs.url, `${GITHUB_HTTPS}/issues`);
     }
   });
 });

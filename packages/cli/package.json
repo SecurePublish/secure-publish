@@ -4,7 +4,7 @@
   "description": "CLI to publish AI HTML dashboards behind company SSO",
   "type": "module",
   "bin": {
-    "securepublish-cli": "./bin/securepublish-cli.js"
+    "securepublish-cli": "./bin/securepublish-cli.cjs"
   },
   "main": "./src/index.js",
   "scripts": {
