@@ -25,6 +25,7 @@ npx --yes @securepublish/cli@1.0.1 login
 npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --title "Painel" --name "vendas-q3"
 npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "ops-ana"
 npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --name "vendas-q3"
+npx --yes @securepublish/cli@1.0.1 revoke <id-or-url>
 npx --yes @securepublish/cli@1.0.1 list
 npx --yes @securepublish/cli@1.0.1 logout
 npx --yes @securepublish/cli@1.0.1 doctor
@@ -33,6 +34,7 @@ npx --yes @securepublish/cli@1.0.1 doctor
 - **login** — connect this machine to your company account (browser + one-time code).
 - **publish** — upload an HTML file. Default access is everyone on your company email domain. `--to` limits it to specific emails.
 - **logout** — disconnect this machine.
+- **revoke** — take a published link down. Accepts the panel id or the full URL. Uses the signed-in account (not Cloudflare credentials). Only the person who published it or the company account owner can remove it. An unknown or already-deleted id is treated as already removed.
 - **list** / **rename** / **doctor** — list published panels, change the link name, or check whether this machine is signed in.
 
 Company-wide means the same email domain as the signed-in account. It is not Google Workspace, Microsoft Entra, or GitHub Org membership.

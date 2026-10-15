@@ -84,6 +84,7 @@ describe("skill documents npm package invocations only", () => {
   it("documents full npx @securepublish/cli@1.0.1 form for login and publish", () => {
     assert.match(skill, new RegExp(`${NPM_NPX_RE} login`));
     assert.match(skill, new RegExp(`${NPM_NPX_RE} publish`));
+    assert.match(skill, new RegExp(`${NPM_NPX_RE} revoke`));
   });
 
   it("never documents github: CLI invocations or bare securepublish-cli <subcommand>", () => {
@@ -150,6 +151,7 @@ describe("README documents npm package invocations", () => {
     assert.match(readme, new RegExp(`${NPM_NPX_RE} publish`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} list`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} doctor`));
+    assert.match(readme, new RegExp(`${NPM_NPX_RE} revoke`));
     assert.doesNotMatch(
       readme,
       new RegExp(GITHUB_CLI_NPX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))

@@ -6,7 +6,7 @@ import http from "node:http";
 import { spawn } from "node:child_process";
 import { loadConfig, configHints } from "./config.js";
 import { loadRegistry, upsertPanel, removePanel } from "./registry.js";
-import { kvPut, kvGet, kvDelete, kvList, verifyToken } from "./cf-api.js";
+import { kvPut, kvGet, kvList, verifyToken } from "./cf-api.js";
 import { mockPut, mockGet, mockDelete, mockList } from "./mock-store.js";
 import {
   parseToFlag,
@@ -59,13 +59,14 @@ Usage:
   ${CLI} rename <id-or-url> --no-name
   ${CLI} logout
   ${CLI} list [--remote]
-  ${CLI} revoke <key>
+  ${CLI} revoke <id-or-url>
   ${CLI} doctor
   ${CLI} mock-serve [--port 8787]
   ${CLI} help
 
-Run \`login\`, sign in with your company account in the browser, and enter the code it shows. Publishing uses that account.
-Do not set CLOUDFLARE_API_TOKEN for publish.
+Run \`login\`, sign in with your company account in the browser, and enter the code it shows. Publishing and revoke use that account.
+Do not set CLOUDFLARE_API_TOKEN for publish or revoke.
+Only the person who published a link or the company account owner can revoke it.
 
 Operator only (\`--operator\` or SECURE_PUBLISH_OPERATOR=1) still writes KV directly:
   CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
@@ -621,34 +622,59 @@ async function cmdRename(ref, flags, cfg) {
   return data;
 }
 
-async function cmdRevoke(key, cfg, flags) {
-  if (!key) throw new Error(`Usage: ${CLI} revoke <key>`);
-  const useMock = Boolean(flags.mock || cfg.mock);
+function revokeSuccessMessage(id) {
+  return `Removed ${id}.`;
+}
 
-  process.stderr.write(`Revoking ${key}…\n`);
+async function cmdRevoke(ref, cfg, flags) {
+  const usage = `Usage: ${CLI} revoke <id-or-url>`;
+  if (!ref) throw new Error(usage);
+
+  const id = parsePanelRef(ref);
+  if (!id) throw new Error(usage);
+
+  const useMock = Boolean(flags.mock || cfg.mock);
   if (useMock) {
-    mockDelete(key);
-  } else {
-    requireCf(cfg);
-    try {
-      await kvDelete({
-        accountId: cfg.accountId,
-        namespaceId: cfg.kvNamespaceId,
-        token: cfg.apiToken,
-        key,
-      });
-    } catch (err) {
-      if (err.status !== 404) throw err;
-      process.stderr.write("KV key already absent (404).\n");
-    }
+    mockDelete(id);
+    removePanel(id);
+    console.log(revokeSuccessMessage(id));
+    return;
   }
 
-  const removed = removePanel(key);
-  console.log(
-    removed
-      ? `Revoked ${key} (store + local registry).`
-      : `Revoked ${key} from store (not in local registry).`
-  );
+  const session = readPublishSession();
+  if (!session) {
+    throw new Error(`Conta não ligada nesta máquina. Rode ${CLI} login.`);
+  }
+
+  const apiBase = (session.apiBase || apiBaseOf(cfg)).replace(/\/$/, "");
+  let res;
+  try {
+    res = await fetch(`${apiBase}/api/panels/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${session.publishToken}`,
+      },
+    });
+  } catch {
+    throw new Error("Couldn't reach Secure Publish. Check your connection and try again.");
+  }
+
+  if (res.status === 401) {
+    clearPublishSession();
+    throw new Error(`Conta não ligada nesta máquina. Rode ${CLI} login.`);
+  }
+  if (res.status === 403) {
+    throw new Error(
+      "only the person who published this link or the company account owner can remove it"
+    );
+  }
+  if (res.status !== 200 && res.status !== 404) {
+    throw new Error("Couldn't remove this link now. Try again in a moment.");
+  }
+
+  removePanel(id);
+  console.log(revokeSuccessMessage(id));
 }
 
 async function cmdDoctor(cfg) {

@@ -38,6 +38,8 @@ User prompts this skill handles:
 - PT: *Publique só para ana@empresa.com e bia@empresa.com.*
 - EN: *Publish this HTML for the whole company.*
 - EN: *Publish only to jane@acme.com.*
+- PT: *Remova este link.* / *Tire este painel do ar.*
+- EN: *Revoke this link.* / *Remove this panel.*
 
 ## What you say
 
@@ -66,6 +68,7 @@ npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --title "Painel" --n
 npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "performance-out-26"
 npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --name "performance-out-26"
 npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --no-name
+npx --yes @securepublish/cli@1.0.1 revoke <id-or-url>
 ```
 
 **Nome do link**
@@ -75,6 +78,8 @@ npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --no-name
 - **Quando sai sem nome por ser sensível:** "Publiquei: {link}. Deixei sem nome no link porque o título tem informação sensível. Quer pôr um nome?" / "Published: {link}. I left the name out of the link because the title has sensitive info. Want to add one?"
 - **Depois do `rename`:** "Pronto, o link agora é {link}. O anterior continua funcionando." / "Done, the link is now {link}. The old one still works."
 - **Depois do `rename` com nome vazio:** "Pronto, o link agora é {link}, sem nome." / "Done, the link is now {link}, with no name."
+- **Depois do `revoke`:** "Pronto, o link foi removido." / "Done, the link is gone."
+- **Se o CLI recusar o revoke (403):** say exactly: "only the person who published this link or the company account owner can remove it"
 
 Company-wide means the same email domain as the signed-in account. If they did not say who can see it, ask once:
 
@@ -93,6 +98,8 @@ On any failure, say exactly:
 > Não consegui publicar agora. A conta está ligada em {host}. Tenta de novo em instantes.
 
 If the command says the account is not linked, go back to the login line. Never ask them for an infrastructure secret.
+
+To revoke, pass the published URL or the panel id to `npx --yes @securepublish/cli@1.0.1 revoke <id-or-url>`. The signed-in account is enough; do not ask for Cloudflare credentials. If the CLI says the link is already gone, treat that as success.
 
 ## Access (V1)
 
