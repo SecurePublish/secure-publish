@@ -22,6 +22,8 @@ The bin name is **`securepublish-cli`**. Do **not** `npm install secure-publish`
 
 ```bash
 npx --yes @securepublish/cli@1.0.1 login
+npx --yes @securepublish/cli@1.0.1 login --finish
+npx --yes @securepublish/cli@1.0.1 login --wait
 npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --title "Painel" --name "vendas-q3"
 npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "ops-ana"
 npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --name "vendas-q3"
@@ -31,7 +33,11 @@ npx --yes @securepublish/cli@1.0.1 logout
 npx --yes @securepublish/cli@1.0.1 doctor
 ```
 
-- **login** — connect this machine to your company account (browser + one-time code).
+Agents: run `login`, show the URL and `user_code` in your own message, then run `login --finish`. Never run `login` through an output-condensing filter or wrapper (for example `rtk` in Claude Code).
+
+- **login** — request a one-time code, print the URL + code, flush, and exit. Then the user enters the code in the browser.
+- **login --finish** — poll until the browser sign-in is approved and store the session.
+- **login --wait** — old blocking behavior (print the code and wait in the same process).
 - **publish** — upload an HTML file. Default access is everyone on your company email domain. `--to` limits it to specific emails.
 - **logout** — disconnect this machine.
 - **revoke** — take a published link down. Accepts the panel id or the full URL. Uses the signed-in account (not Cloudflare credentials). Only the person who published it or the company account owner can remove it. An unknown or already-deleted id is treated as already removed.

@@ -83,8 +83,17 @@ describe("skill documents npm package invocations only", () => {
 
   it("documents full npx @securepublish/cli@1.0.1 form for login and publish", () => {
     assert.match(skill, new RegExp(`${NPM_NPX_RE} login`));
+    assert.match(skill, new RegExp(`${NPM_NPX_RE} login --finish`));
     assert.match(skill, new RegExp(`${NPM_NPX_RE} publish`));
     assert.match(skill, new RegExp(`${NPM_NPX_RE} revoke`));
+  });
+
+  it("tells the agent to show the code in its own message and skip output wrappers", () => {
+    const saySection = skill.split("## What you say")[1]?.split("## Access")[0] ?? "";
+    assert.match(saySection, /your own message/i);
+    assert.match(saySection, /output-condensing filter or wrapper/i);
+    assert.match(saySection, /rtk/i);
+    assert.match(saySection, /login --finish/);
   });
 
   it("never documents github: CLI invocations or bare securepublish-cli <subcommand>", () => {
@@ -148,6 +157,8 @@ describe("README documents npm package invocations", () => {
   const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 
   it("uses full npx @securepublish/cli@1.0.1 form for runnable CLI examples", () => {
+    assert.match(readme, new RegExp(`${NPM_NPX_RE} login`));
+    assert.match(readme, new RegExp(`${NPM_NPX_RE} login --finish`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} publish`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} list`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} doctor`));
