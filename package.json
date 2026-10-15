@@ -1,9 +1,9 @@
 {
   "name": "@securepublish/cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "CLI to publish HTML pages that only your company or listed people can open",
   "bin": {
-    "securepublish-cli": "./packages/cli/bin/securepublish-cli.cjs"
+    "securepublish-cli": "packages/cli/bin/securepublish-cli.cjs"
   },
   "files": [
     "packages/cli/bin",
@@ -21,7 +21,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/SecurePublish/secure-publish"
+    "url": "git+https://github.com/SecurePublish/secure-publish.git"
   },
   "homepage": "https://github.com/SecurePublish/secure-publish",
   "bugs": {

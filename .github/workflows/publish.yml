@@ -30,6 +30,26 @@ jobs:
       # Node 22 ships npm 10.x; Trusted Publishing needs npm >= 11.5.1.
       - run: npm install -g "npm@^11.5.1"
 
+      # npm Trusted Publisher on npmjs.com must list this exact workflow
+      # filename: publish.yml (not a path, not a different name).
+      - name: Verify tag matches package.json version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "$EVENT_NAME" = "release" ]; then
+            TAG="$RELEASE_TAG"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          TAG="${TAG#refs/tags/}"
+          if [ "$TAG" != "v${VERSION}" ]; then
+            echo "Refusing to publish: tag '${TAG}' does not match package.json version 'v${VERSION}'."
+            exit 1
+          fi
+
       - run: npm ci
       - run: npm test
 
