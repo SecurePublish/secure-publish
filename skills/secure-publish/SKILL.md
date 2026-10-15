@@ -43,7 +43,11 @@ User prompts this skill handles:
 
 Say only these lines about sign-in and publish. Do not explain the mechanism.
 
-If this machine is not signed in yet, run `npx --yes @securepublish/cli@1.0.1 login` in the background. Do not wait for it to finish. As soon as it prints the code, say exactly (PT):
+If this machine is not signed in yet, run `login` then `login --finish` as two separate commands. Never run either through an output-condensing filter or wrapper (for example `rtk` in Claude Code): those buffer command output until the process exits, so the user never sees the code. Run the CLI directly.
+
+1. Run `npx --yes @securepublish/cli@1.0.1 login` in the foreground and wait for it to exit (it prints the URL and `user_code`, flushes, then exits 0 immediately). Do not background it.
+
+2. In **your own message**, show the verification URL and the `user_code` from that CLI output (replace `{user_code}`; do not invent a code or URL). Say exactly (PT):
 
 You MUST show the `user_code` from the CLI output to the user (replace `{user_code}`). Do not invent a code.
 
@@ -53,7 +57,9 @@ EN:
 
 > I'll open the sign-in page. Sign in with your company account and enter the code {user_code}.
 
-When the login command finishes, say exactly:
+3. Then run `npx --yes @securepublish/cli@1.0.1 login --finish` (also directly, no output filter/wrapper) and wait for it to complete.
+
+When `login --finish` succeeds, say exactly:
 
 > Conta ligada. Publicando em {host}, aberto pra empresa.
 
