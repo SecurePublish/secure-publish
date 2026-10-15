@@ -6,4 +6,5 @@ dist/
 .secure-publish/mock-kv/
 .secure-publish/mock-meta/
 *.log
+*.tgz
 .DS_Store

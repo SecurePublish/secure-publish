@@ -1,6 +1,6 @@
 {
-  "name": "securepublish-cli",
-  "version": "0.1.0",
+  "name": "@securepublish/cli",
+  "version": "1.0.0",
   "description": "CLI to publish AI HTML dashboards behind company SSO",
   "type": "module",
   "bin": {
@@ -27,12 +27,16 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SecurePublish/secure-publish.git",
+    "url": "https://github.com/SecurePublish/secure-publish",
     "directory": "packages/cli"
   },
   "homepage": "https://github.com/SecurePublish/secure-publish",
   "bugs": {
     "url": "https://github.com/SecurePublish/secure-publish/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "license": "MIT",
   "dependencies": {}
