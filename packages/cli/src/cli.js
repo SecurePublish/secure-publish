@@ -36,6 +36,26 @@ const LOGOUT_KEEP_LOCAL = {
   en: "Couldn't sign out right now. This machine is still signed in. Try again in a moment.",
 };
 
+/** Stable login error codes (parse `error: <code>`). Messages follow --lang. */
+const LOGIN_ERRORS = {
+  login_failed: {
+    pt: "Não consegui ligar a conta agora. Tenta de novo em instantes.",
+    en: "Couldn't connect the account right now. Try again in a moment.",
+  },
+  login_expired: {
+    pt: "Não consegui ligar a conta agora. O código expirou. Rode login de novo.",
+    en: "Couldn't connect the account. The code expired. Run login again.",
+  },
+  login_denied: {
+    pt: "Não consegui ligar a conta agora. O login foi recusado no navegador.",
+    en: "Couldn't connect the account. Sign-in was denied in the browser.",
+  },
+  login_no_pending: {
+    pt: "Não há um login em andamento. Rode login, depois login --finish.",
+    en: "There is no login in progress. Run login, then login --finish.",
+  },
+};
+
 function cliLang(flags) {
   return flags?.lang === "en" ? "en" : "pt";
 }
@@ -54,6 +74,8 @@ Auth model:
 
 Usage:
   ${CLI} login
+  ${CLI} login --finish
+  ${CLI} login --wait
   ${CLI} publish <file.html> [--title "..."] [--name "..."] [--to email,email] [--mock]
   ${CLI} rename <id-or-url> --name <text>
   ${CLI} rename <id-or-url> --no-name
@@ -64,7 +86,7 @@ Usage:
   ${CLI} mock-serve [--port 8787]
   ${CLI} help
 
-Run \`login\`, sign in with your company account in the browser, and enter the code it shows. Publishing uses that account.
+Run \`login\` to print the URL and code (it flushes and exits at once), enter the code in the browser, then \`login --finish\`. \`login --wait\` keeps the old blocking flow.
 Do not set CLOUDFLARE_API_TOKEN for publish.
 
 Operator only (\`--operator\` or SECURE_PUBLISH_OPERATOR=1) still writes KV directly:
@@ -197,8 +219,26 @@ function decodeRecord(raw) {
 }
 
 
+function sessionDir() {
+  return path.join(os.homedir(), ".secure-publish");
+}
+
 function sessionFile() {
-  return path.join(os.homedir(), ".secure-publish", "session.json");
+  return path.join(sessionDir(), "session.json");
+}
+
+function pendingFile() {
+  return path.join(sessionDir(), "device-pending.json");
+}
+
+function writeJson0600(file, data) {
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+  fs.chmodSync(tmp, 0o600);
+  fs.renameSync(tmp, file);
+  fs.chmodSync(file, 0o600);
 }
 
 function apiBaseOf(cfg) {
@@ -235,14 +275,37 @@ function readPublishSession() {
 }
 
 function writePublishSession(session) {
-  const file = sessionFile();
-  const dir = path.dirname(file);
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(session, null, 2) + "\n", { mode: 0o600 });
-  fs.chmodSync(tmp, 0o600);
-  fs.renameSync(tmp, file);
-  fs.chmodSync(file, 0o600);
+  writeJson0600(sessionFile(), session);
+}
+
+function writePendingDevice(pending) {
+  writeJson0600(pendingFile(), pending);
+}
+
+function readPendingDevice() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(pendingFile(), "utf8"));
+    const device_code = String(raw?.device_code || "").trim();
+    if (!device_code) return null;
+    return {
+      device_code,
+      user_code: raw.user_code || null,
+      verification_url: raw.verification_url || null,
+      interval: raw.interval,
+      expiresAt: raw.expiresAt || null,
+      apiBase: raw.apiBase || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function clearPendingDevice() {
+  try {
+    fs.unlinkSync(pendingFile());
+  } catch {
+    /* absent */
+  }
 }
 
 function clearPublishSession() {
@@ -269,33 +332,108 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function cmdLogin(cfg, flags = {}) {
-  const apiBase = apiBaseOf(cfg);
-  const startRes = await fetch(`${apiBase}/api/device/code`, {
-    method: "POST",
-    headers: { accept: "application/json" },
+function flushStream(stream) {
+  return new Promise((resolve) => {
+    if (!stream || typeof stream.write !== "function" || stream.destroyed) {
+      resolve();
+      return;
+    }
+    stream.write("", "utf8", () => resolve());
   });
+}
+
+/** Wait until stdout/stderr have drained so wrappers see the code before exit. */
+async function flushStdio() {
+  await flushStream(process.stdout);
+  await flushStream(process.stderr);
+}
+
+function loginFail(code, lang) {
+  const messages = LOGIN_ERRORS[code] || LOGIN_ERRORS.login_failed;
+  const resolved = LOGIN_ERRORS[code] ? code : "login_failed";
+  console.error(`error: ${resolved}`);
+  console.error(messages[lang] || messages.pt);
+  process.exitCode = 1;
+}
+
+async function cmdLogin(cfg, flags = {}) {
+  if (flags.finish) {
+    await cmdLoginFinish(cfg, flags);
+    return;
+  }
+  await cmdLoginStart(cfg, flags);
+  if (process.exitCode) return;
+  if (flags.wait) await cmdLoginFinish(cfg, flags);
+}
+
+async function cmdLoginStart(cfg, flags = {}) {
+  const apiBase = apiBaseOf(cfg);
+  const lang = cliLang(flags);
+  let startRes;
+  try {
+    startRes = await fetch(`${apiBase}/api/device/code`, {
+      method: "POST",
+      headers: { accept: "application/json" },
+    });
+  } catch {
+    loginFail("login_failed", lang);
+    return;
+  }
   const start = await startRes.json().catch(() => ({}));
   if (!startRes.ok || !start.verification_url || !start.device_code || !start.user_code) {
-    throw new Error("Não consegui abrir o login agora. Tenta de novo em instantes.");
+    loginFail("login_failed", lang);
+    return;
   }
-  const lang = cliLang(flags);
+  writePendingDevice({
+    device_code: start.device_code,
+    user_code: start.user_code,
+    verification_url: start.verification_url,
+    interval: Math.max(1, Number(start.interval) || 2),
+    expiresAt: new Date(Date.now() + (Number(start.expires_in) || 600) * 1000).toISOString(),
+    apiBase,
+  });
   const [line1, line2] = LOGIN_PROMPT[lang];
   console.log(
     line1.replace("{url}", start.verification_url).replace("{user_code}", start.user_code)
   );
   console.log(line2);
   openLoginUrl(start.verification_url);
-  const interval = Math.max(1, Number(start.interval) || 2) * 1000;
-  const deadline = Date.now() + (Number(start.expires_in) || 600) * 1000;
+  await flushStdio();
+}
+
+async function cmdLoginFinish(cfg, flags = {}) {
+  const lang = cliLang(flags);
+  const pending = readPendingDevice();
+  if (!pending?.device_code) {
+    loginFail("login_no_pending", lang);
+    return;
+  }
+  const expiresAtMs = Date.parse(pending.expiresAt);
+  if (Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now()) {
+    clearPendingDevice();
+    loginFail("login_expired", lang);
+    return;
+  }
+  const apiBase = String(pending.apiBase || apiBaseOf(cfg)).replace(/\/$/, "");
+  let interval = Math.max(1, Number(pending.interval) || 2) * 1000;
+  const deadline = Number.isFinite(expiresAtMs) ? expiresAtMs : Date.now() + 600_000;
+
   while (Date.now() < deadline) {
     await sleep(interval);
-    const pollRes = await fetch(`${apiBase}/api/device/token`, {
-      method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json" },
-      body: JSON.stringify({ device_code: start.device_code }),
-    });
-    const poll = await pollRes.json().catch(() => ({}));
+    if (Date.now() >= deadline) break;
+    let pollRes;
+    let poll;
+    try {
+      pollRes = await fetch(`${apiBase}/api/device/token`, {
+        method: "POST",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ device_code: pending.device_code }),
+      });
+      poll = await pollRes.json().catch(() => ({}));
+    } catch {
+      loginFail("login_failed", lang);
+      return;
+    }
     if (pollRes.ok && poll.access_token) {
       const expiresIn = Number(poll.expires_in) || 0;
       writePublishSession({
@@ -305,15 +443,33 @@ async function cmdLogin(cfg, flags = {}) {
         apiBase,
         expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
       });
+      clearPendingDevice();
       if (poll.email) console.log(`email: ${poll.email}`);
       if (poll.host) console.log(`host: ${poll.host}`);
       else console.log("host:");
       return;
     }
     if (poll.error === "authorization_pending") continue;
-    throw new Error("Não consegui ligar a conta agora. Tenta de novo em instantes.");
+    if (poll.error === "slow_down") {
+      interval += 5000;
+      continue;
+    }
+    if (poll.error === "access_denied") {
+      clearPendingDevice();
+      loginFail("login_denied", lang);
+      return;
+    }
+    if (poll.error === "expired_token") {
+      clearPendingDevice();
+      loginFail("login_expired", lang);
+      return;
+    }
+    clearPendingDevice();
+    loginFail("login_failed", lang);
+    return;
   }
-  throw new Error("Não consegui ligar a conta agora. Tenta de novo em instantes.");
+  clearPendingDevice();
+  loginFail("login_expired", lang);
 }
 
 async function cmdLogout(cfg, flags = {}) {
