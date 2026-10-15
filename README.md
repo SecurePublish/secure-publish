@@ -21,16 +21,16 @@ Then ask: *Publish this HTML dashboard with Secure Publish.*
 The bin name is **`securepublish-cli`**. Do **not** `npm install secure-publish` or `npx secure-publish` (unrelated public package). Use the scoped npm package every time (npx does not leave `securepublish-cli` on PATH):
 
 ```bash
-npx --yes @securepublish/cli@1.0.1 login
-npx --yes @securepublish/cli@1.0.1 login --finish
-npx --yes @securepublish/cli@1.0.1 login --wait
-npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --title "Painel" --name "vendas-q3"
-npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "ops-ana"
-npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --name "vendas-q3"
-npx --yes @securepublish/cli@1.0.1 revoke <id-or-url>
-npx --yes @securepublish/cli@1.0.1 list
-npx --yes @securepublish/cli@1.0.1 logout
-npx --yes @securepublish/cli@1.0.1 doctor
+npx --yes @securepublish/cli@1.0.2 login
+npx --yes @securepublish/cli@1.0.2 login --finish
+npx --yes @securepublish/cli@1.0.2 login --wait
+npx --yes @securepublish/cli@1.0.2 publish ./dashboard.html --title "Painel" --name "vendas-q3"
+npx --yes @securepublish/cli@1.0.2 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "ops-ana"
+npx --yes @securepublish/cli@1.0.2 rename <id-or-url> --name "vendas-q3"
+npx --yes @securepublish/cli@1.0.2 revoke <id-or-url>
+npx --yes @securepublish/cli@1.0.2 list
+npx --yes @securepublish/cli@1.0.2 logout
+npx --yes @securepublish/cli@1.0.2 doctor
 ```
 
 Agents: run `login`, show the URL and `user_code` in your own message, then run `login --finish`. Never run `login` through an output-condensing filter or wrapper (for example `rtk` in Claude Code).

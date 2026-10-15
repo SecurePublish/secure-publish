@@ -25,7 +25,7 @@ npx skills add https://github.com/SecurePublish/secure-publish --skill "secure-p
 Run the CLI with the scoped npm package (not the public npm package named `secure-publish` — that is a different project). Do **not** run `npm install secure-publish`, `npm install -g secure-publish`, or `npx secure-publish`. Use only the full form every time (npx does **not** leave `securepublish-cli` on PATH):
 
 ```bash
-npx --yes @securepublish/cli@1.0.1 <subcommand>
+npx --yes @securepublish/cli@1.0.2 <subcommand>
 ```
 
 That runs this repo’s `securepublish-cli` binary for that one invocation (login, publish, help, and the rest).
@@ -47,7 +47,7 @@ Say only these lines about sign-in and publish. Do not explain the mechanism.
 
 If this machine is not signed in yet, run `login` then `login --finish` as two separate commands. Never run either through an output-condensing filter or wrapper (for example `rtk` in Claude Code): those buffer command output until the process exits, so the user never sees the code. Run the CLI directly.
 
-1. Run `npx --yes @securepublish/cli@1.0.1 login` in the foreground and wait for it to exit (it prints the URL and `user_code`, flushes, then exits 0 immediately). Do not background it.
+1. Run `npx --yes @securepublish/cli@1.0.2 login` in the foreground and wait for it to exit (it prints the URL and `user_code`, flushes, then exits 0 immediately). Do not background it.
 
 2. In **your own message**, show the verification URL and the `user_code` from that CLI output (replace `{user_code}`; do not invent a code or URL). Say exactly (PT):
 
@@ -59,7 +59,7 @@ EN:
 
 > I'll open the sign-in page. Sign in with your company account and enter the code {user_code}.
 
-3. Then run `npx --yes @securepublish/cli@1.0.1 login --finish` (also directly, no output filter/wrapper) and wait for it to complete.
+3. Then run `npx --yes @securepublish/cli@1.0.2 login --finish` (also directly, no output filter/wrapper) and wait for it to complete.
 
 When `login --finish` succeeds, say exactly:
 
@@ -70,11 +70,11 @@ Use the host the command printed. If there is no host yet, ask where to publish.
 Then publish:
 
 ```bash
-npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --title "Painel" --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.1 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.1 rename <id-or-url> --no-name
-npx --yes @securepublish/cli@1.0.1 revoke <id-or-url>
+npx --yes @securepublish/cli@1.0.2 publish ./dashboard.html --title "Painel" --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.2 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.2 rename <id-or-url> --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.2 rename <id-or-url> --no-name
+npx --yes @securepublish/cli@1.0.2 revoke <id-or-url>
 ```
 
 **Nome do link**
@@ -105,7 +105,7 @@ On any failure, say exactly:
 
 If the command says the account is not linked, go back to the login line. Never ask them for an infrastructure secret.
 
-To revoke, pass the published URL or the panel id to `npx --yes @securepublish/cli@1.0.1 revoke <id-or-url>`. The signed-in account is enough; do not ask for Cloudflare credentials. If the CLI says the link is already gone, treat that as success.
+To revoke, pass the published URL or the panel id to `npx --yes @securepublish/cli@1.0.2 revoke <id-or-url>`. The signed-in account is enough; do not ask for Cloudflare credentials. If the CLI says the link is already gone, treat that as success.
 
 ## Access (V1)
 
