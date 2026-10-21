@@ -8,6 +8,25 @@ description: >-
   V1 is email-domain access, not Workspace/Entra/GitHub Org membership.
 ---
 
+**Quem opera e para onde vão os dados.** O Secure Publish é operado por SecurePublish. O HTML que seu agente publica fica guardado no nosso serviço e só abre pra quem entrar com o login da empresa no domínio que você autorizou. Fica guardado até você apagar. Ao apagar, o link para de abrir em cerca de um minuto.
+
+**Who operates this and where the data goes.** Secure Publish is operated by SecurePublish. The HTML your agent publishes is stored in our service and only opens for people who sign in with a company login on the domain you authorized. It stays stored until you delete it. After you delete it, the link stops opening in about a minute.
+
+**Antes de instalar.** O SKILL.md e o código da CLI podem ser lidos sem conta no GitHub:
+
+**Before you install.** You can read SKILL.md and the CLI source without a GitHub account:
+
+- Skill: https://securepublish.work/skill.md
+- CLI: https://securepublish.work/cli
+- npm: https://www.npmjs.com/package/@securepublish/cli
+- Source for this version: https://unpkg.com/browse/@securepublish/cli@1.0.4/ · https://cdn.jsdelivr.net/npm/@securepublish/cli@1.0.4/
+
+**Sobre o login por código.** O código aparece no seu próprio terminal; digite só em app.securepublish.work/device, depois de entrar com sua conta. Nunca pedimos esse código por e-mail, chat ou telefone. Se alguém te mandar um código, não digite.
+
+**About code sign-in.** The code appears in your own terminal; type it only at app.securepublish.work/device, after you sign in with your account. We never ask for this code by email, chat, or phone. If someone sends you a code, do not type it.
+
+Security & data: https://securepublish.work/security · PT: https://securepublish.work/pt/seguranca
+
 # Secure Publish
 
 There is no web “publish” button. The console only tracks URLs and views.
@@ -25,7 +44,7 @@ npx skills add https://github.com/SecurePublish/secure-publish --skill "secure-p
 Run the CLI with the scoped npm package (not the public npm package named `secure-publish` — that is a different project). Do **not** run `npm install secure-publish`, `npm install -g secure-publish`, or `npx secure-publish`. Use only the full form every time (npx does **not** leave `securepublish-cli` on PATH):
 
 ```bash
-npx --yes @securepublish/cli@1.0.3 <subcommand>
+npx --yes @securepublish/cli@1.0.4 <subcommand>
 ```
 
 That runs this repo’s `securepublish-cli` binary for that one invocation (login, publish, help, and the rest).
@@ -47,7 +66,7 @@ Say only these lines about sign-in and publish. Do not explain the mechanism.
 
 If this machine is not signed in yet, run `login` then `login --finish` as two separate commands. Never run either through an output-condensing filter or wrapper (for example `rtk` in Claude Code): those buffer command output until the process exits, so the user never sees the code. Run the CLI directly.
 
-1. Run `npx --yes @securepublish/cli@1.0.3 login` in the foreground and wait for it to exit (it prints the URL and `user_code`, flushes, then exits 0 immediately). Do not background it.
+1. Run `npx --yes @securepublish/cli@1.0.4 login` in the foreground and wait for it to exit (it prints the URL and `user_code`, flushes, then exits 0 immediately). Do not background it.
 
 2. In **your own message**, show the verification URL and the `user_code` from that CLI output (replace `{user_code}`; do not invent a code or URL). Say exactly (PT):
 
@@ -59,7 +78,7 @@ EN:
 
 > I'll open the sign-in page. Sign in with your company account and enter the code {user_code}.
 
-3. Then run `npx --yes @securepublish/cli@1.0.3 login --finish` (also directly, no output filter/wrapper) and wait for it to complete.
+3. Then run `npx --yes @securepublish/cli@1.0.4 login --finish` (also directly, no output filter/wrapper) and wait for it to complete.
 
 When `login --finish` succeeds, say exactly:
 
@@ -70,11 +89,11 @@ Use the host the command printed. If there is no host yet, ask where to publish.
 Then publish:
 
 ```bash
-npx --yes @securepublish/cli@1.0.3 publish ./dashboard.html --title "Painel" --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.3 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.3 rename <id-or-url> --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.3 rename <id-or-url> --no-name
-npx --yes @securepublish/cli@1.0.3 revoke <id-or-url>
+npx --yes @securepublish/cli@1.0.4 publish ./dashboard.html --title "Painel" --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.4 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.4 rename <id-or-url> --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.4 rename <id-or-url> --no-name
+npx --yes @securepublish/cli@1.0.4 revoke <id-or-url>
 ```
 
 **Nome do link**
@@ -99,7 +118,7 @@ If they passed emails:
 
 > Publicado só para {emails}: {url}
 
-If the CLI says the file is too large to publish (or exits after a 413), tell the user that. Use the file size and the limit in MB from the CLI output, plus its tips. Do not guess that size was the problem. Do not retry the same file. Do not use the generic line below for this case.
+If the CLI refuses the publish because of size (or exits after a 413), show the user the CLI message as written. Do not invent a file size, a limit, or tips. Do not retry the same file. Do not use the generic line below for this case.
 
 On any other failure, say exactly:
 
@@ -107,17 +126,13 @@ On any other failure, say exactly:
 
 If the command says the account is not linked, go back to the login line. Never ask them for an infrastructure secret.
 
-To revoke, pass the published URL or the panel id to `npx --yes @securepublish/cli@1.0.3 revoke <id-or-url>`. The signed-in account is enough; do not ask for Cloudflare credentials. If the CLI says the link is already gone, treat that as success.
+To revoke, pass the published URL or the panel id to `npx --yes @securepublish/cli@1.0.4 revoke <id-or-url>`. The signed-in account is enough; do not ask for extra credentials. If the CLI says the link is already gone, treat that as success.
 
-## Publish size limit
+## Publish
 
-Each publish has an upload size limit. The default is **3 MB** (`3 * 1024 * 1024` = 3145728 bytes). The CLI resolves it in this order:
+publish — publica um arquivo HTML. Por padrão, todo mundo com e-mail do domínio da sua empresa consegue abrir; use --to para liberar só para e-mails específicos. Existe um limite de tamanho por publicação definido pelo serviço. Se o arquivo for grande demais, a CLI para antes de enviar e diz o que fazer.
 
-1. Env var `SECUREPUBLISH_MAX_UPLOAD_BYTES` (bytes), if set to a positive integer
-2. `GET /api/limits` on the configured server, JSON `{"maxUploadBytes": <number>}` (short timeout; cached for the run)
-3. Fallback 3145728 if the endpoint is missing or fails
-
-Before publishing HTML with inlined images, check the file size. If it is over the limit, tell the user clearly (file size, limit in MB) and suggest: compress or inline fewer images, move large images or assets out of the page, or split into several pages. A file close to the limit (over 90%) may still publish; mention the warning if the CLI prints one.
+publish — publishes an HTML file. By default, anyone with an email on your company domain can open it; use --to to allow only specific emails. There is a per-publish size limit set by the service. If the file is too large, the CLI stops before sending and says what to do.
 
 ## Access (V1)
 
@@ -138,7 +153,7 @@ Before publishing HTML with inlined images, check the file size. If it is over t
 | Email not on company domain | Seu e-mail não é do domínio desta empresa. Peça acesso ou use a conta corporativa. | Your email isn’t on this company’s domain. Ask for access or use your work account. |
 | Signed in, no permission | Você está logado, mas não tem permissão neste dashboard. | You’re signed in, but you don’t have access to this dashboard. |
 | Missing emails when they asked for a list | Inclua pelo menos um e-mail | Add at least one email |
-| File over the per-publish upload limit | Este arquivo é grande demais para publicar. Ele tem {size} MB; o limite por publicação é {limit} MB. Comprima ou coloque menos imagens no HTML, tire imagens grandes da página, ou divida em várias páginas. | This file is too large to publish. There is a per-publish upload limit. This file is {size} MB; the limit is {limit} MB. Compress or inline fewer images, move large images or assets out, split into several pages. |
+| File over the per-publish size limit | Repeat the CLI message as written. Do not invent a size, a limit, or tips. | Repeat the CLI message as written. Do not invent a size, a limit, or tips. |
 
 ## Do not claim
 

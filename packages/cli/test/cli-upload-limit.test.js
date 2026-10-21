@@ -1,5 +1,5 @@
 /**
- * publish pre-flight, near-limit warning, and 413 mapping.
+ * publish: server-owned size pre-check, fallback upload, 413 display, sanitization.
  */
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "../src/cli.js";
-import { resetUploadLimitCache, uploadTooLargeMessage } from "../src/upload-limit.js";
+import { SIZE_REFUSED_MESSAGE } from "../src/upload-limit.js";
 
 function token() {
   return "ab".repeat(32);
@@ -61,12 +61,20 @@ function okPublishResponse() {
   );
 }
 
+function expectedPayload(html, extra = {}) {
+  return JSON.stringify({ html, title: "Painel", ...extra });
+}
+
 describe("CLI publish upload size limit", () => {
   let tmp;
   let origHome;
   let origCwd;
   let origFetch;
   let origEnv;
+  let origOperator;
+  let origToken;
+  let origAccount;
+  let origNs;
   let calls;
 
   beforeEach(() => {
@@ -74,13 +82,20 @@ describe("CLI publish upload size limit", () => {
     origHome = process.env.HOME;
     origCwd = process.cwd();
     origEnv = process.env.SECUREPUBLISH_MAX_UPLOAD_BYTES;
+    origOperator = process.env.SECURE_PUBLISH_OPERATOR;
+    origToken = process.env.CLOUDFLARE_API_TOKEN;
+    origAccount = process.env.CLOUDFLARE_ACCOUNT_ID;
+    origNs = process.env.SECURE_PUBLISH_KV_NAMESPACE_ID;
     delete process.env.SECUREPUBLISH_MAX_UPLOAD_BYTES;
+    delete process.env.SECURE_PUBLISH_OPERATOR;
+    delete process.env.CLOUDFLARE_API_TOKEN;
+    delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    delete process.env.SECURE_PUBLISH_KV_NAMESPACE_ID;
     process.env.HOME = tmp;
     process.chdir(tmp);
     writeSession(tmp);
     calls = [];
     origFetch = globalThis.fetch;
-    resetUploadLimitCache();
   });
 
   afterEach(() => {
@@ -88,95 +103,286 @@ describe("CLI publish upload size limit", () => {
     process.env.HOME = origHome;
     if (origEnv === undefined) delete process.env.SECUREPUBLISH_MAX_UPLOAD_BYTES;
     else process.env.SECUREPUBLISH_MAX_UPLOAD_BYTES = origEnv;
+    if (origOperator === undefined) delete process.env.SECURE_PUBLISH_OPERATOR;
+    else process.env.SECURE_PUBLISH_OPERATOR = origOperator;
+    if (origToken === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
+    else process.env.CLOUDFLARE_API_TOKEN = origToken;
+    if (origAccount === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    else process.env.CLOUDFLARE_ACCOUNT_ID = origAccount;
+    if (origNs === undefined) delete process.env.SECURE_PUBLISH_KV_NAMESPACE_ID;
+    else process.env.SECURE_PUBLISH_KV_NAMESPACE_ID = origNs;
     globalThis.fetch = origFetch;
-    resetUploadLimitCache();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("uses GET /api/limits when the env var is unset", async () => {
-    delete process.env.SECUREPUBLISH_MAX_UPLOAD_BYTES;
+  it("blocks the upload and prints the server message when the HTML is over upload.maxBytes", async () => {
     const htmlPath = path.join(tmp, "dash.html");
-    fs.writeFileSync(htmlPath, "z".repeat(50));
+    const html = "z".repeat(80);
+    fs.writeFileSync(htmlPath, html);
+    const htmlBytes = Buffer.byteLength(html, "utf8");
+    const serverMessage = "Este arquivo passa do limite do serviço. Comprima as imagens.";
     globalThis.fetch = async (url, init) => {
       calls.push({ url: String(url), init });
       if (String(url).endsWith("/api/limits")) {
-        return new Response(JSON.stringify({ maxUploadBytes: 40 }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({
+            upload: { maxBytes: htmlBytes - 1, message: serverMessage },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
       }
-      throw new Error("POST should not run when /api/limits says the file is over the limit");
-    };
-    await assert.rejects(
-      () => main(["publish", htmlPath, "--title", "Painel"]),
-      /too large to publish/i
-    );
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, "https://app.securepublish.work/api/limits");
-    assert.equal(calls[0].init.method, "GET");
-  });
-
-  it("does not upload when the file is over the resolved limit", async () => {
-    process.env.SECUREPUBLISH_MAX_UPLOAD_BYTES = "100";
-    const htmlPath = path.join(tmp, "dash.html");
-    const html = "x".repeat(120);
-    fs.writeFileSync(htmlPath, html);
-    globalThis.fetch = async (url, init) => {
-      calls.push({ url: String(url), init });
-      throw new Error("fetch should not run for an over-limit file");
+      throw new Error("POST should not run when /api/limits says the HTML is over the limit");
     };
     await assert.rejects(
       () => main(["publish", htmlPath, "--title", "Painel"]),
       (e) => {
-        assert.match(e.message, /too large to publish/i);
-        assert.match(e.message, /per-publish upload limit/i);
-        assert.equal(e.message, uploadTooLargeMessage(Buffer.byteLength(html), 100));
+        assert.equal(e.message, serverMessage);
+        assert.doesNotMatch(e.message, /too large to publish/i);
+        assert.doesNotMatch(e.message, /3145728|3 MB|SECUREPUBLISH/);
         return true;
       }
     );
-    assert.equal(calls.length, 0);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "https://app.securepublish.work/api/limits");
+    assert.equal(calls[0].init.method, "GET");
+    assert.equal(calls[0].init.headers["accept-language"], "pt-BR");
   });
 
-  it("warns when the file is over 90% of the limit and still publishes", async () => {
-    process.env.SECUREPUBLISH_MAX_UPLOAD_BYTES = "1000";
+  it("compares decoded HTML UTF-8 bytes to upload.maxBytes, not the JSON envelope", async () => {
+    const maxBytes = 3 * 1024 * 1024;
     const htmlPath = path.join(tmp, "dash.html");
-    fs.writeFileSync(htmlPath, "y".repeat(901));
+    const exact = "a".repeat(maxBytes);
+    assert.equal(Buffer.byteLength(exact, "utf8"), maxBytes);
+    fs.writeFileSync(htmlPath, exact);
     globalThis.fetch = async (url, init) => {
       calls.push({ url: String(url), init });
+      if (String(url).endsWith("/api/limits")) {
+        return new Response(
+          JSON.stringify({
+            upload: { maxBytes, message: "too big" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      return okPublishResponse();
+    };
+    const out = await withIo(() => main(["publish", htmlPath, "--title", "Painel"]));
+    assert.ok(calls.some((c) => c.init?.method === "POST"), "3145728-byte HTML must pass the pre-check");
+    assert.match(out, /wise\.securepublish\.work\/k7f3qx2abc/);
+  });
+
+  it("stops a 3145729-byte HTML before POST", async () => {
+    const maxBytes = 3 * 1024 * 1024;
+    const htmlPath = path.join(tmp, "dash.html");
+    const over = "a".repeat(maxBytes + 1);
+    assert.equal(Buffer.byteLength(over, "utf8"), maxBytes + 1);
+    fs.writeFileSync(htmlPath, over);
+    const serverMessage = "Este arquivo passa do limite do serviço.";
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      if (String(url).endsWith("/api/limits")) {
+        return new Response(
+          JSON.stringify({ upload: { maxBytes, message: serverMessage } }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      throw new Error("POST should not run for HTML over upload.maxBytes");
+    };
+    await assert.rejects(
+      () => main(["publish", htmlPath, "--title", "Painel"]),
+      (e) => {
+        assert.equal(e.message, serverMessage);
+        return true;
+      }
+    );
+    assert.equal(calls.filter((c) => c.init?.method === "POST").length, 0);
+  });
+
+  it("lets a quote/newline-heavy 2.99 MB HTML through even when the JSON envelope is over 3 MB", async () => {
+    const maxBytes = 3 * 1024 * 1024;
+    const htmlBytes = Math.floor(2.99 * 1024 * 1024);
+    const html = '"\n'.repeat(htmlBytes / 2);
+    assert.equal(Buffer.byteLength(html, "utf8"), htmlBytes);
+    assert.ok(htmlBytes < maxBytes);
+    const envelope = expectedPayload(html);
+    assert.ok(
+      Buffer.byteLength(envelope, "utf8") > maxBytes,
+      "JSON envelope must exceed maxBytes so this would fail a body-size pre-check"
+    );
+    const htmlPath = path.join(tmp, "dash.html");
+    fs.writeFileSync(htmlPath, html);
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      if (String(url).endsWith("/api/limits")) {
+        return new Response(
+          JSON.stringify({ upload: { maxBytes, message: "too big" } }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      return okPublishResponse();
+    };
+    const out = await withIo(() => main(["publish", htmlPath, "--title", "Painel"]));
+    const post = calls.find((c) => c.init?.method === "POST");
+    assert.ok(post, "quote/newline-heavy 2.99 MB HTML must be sent");
+    assert.equal(JSON.parse(post.init.body).html, html);
+    assert.match(out, /wise\.securepublish\.work\/k7f3qx2abc/);
+  });
+
+  it("sends Accept-Language from --lang on GET /api/limits", async () => {
+    const htmlPath = path.join(tmp, "dash.html");
+    fs.writeFileSync(htmlPath, "<html>hi</html>\n");
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      if (String(url).endsWith("/api/limits")) {
+        return new Response(
+          JSON.stringify({ upload: { maxBytes: 1_000_000, message: "too big" } }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      return okPublishResponse();
+    };
+    await withIo(() => main(["publish", htmlPath, "--title", "Painel", "--lang", "en"]));
+    const limits = calls.find((c) => String(c.url).endsWith("/api/limits"));
+    assert.ok(limits);
+    assert.equal(limits.init.headers["accept-language"], "en");
+  });
+
+  it("uploads anyway when upload.message is empty or missing (never a blank error)", async () => {
+    const htmlPath = path.join(tmp, "dash.html");
+    const html = "z".repeat(80);
+    fs.writeFileSync(htmlPath, html);
+    const htmlBytes = Buffer.byteLength(html, "utf8");
+
+    const run = async (upload) => {
+      calls = [];
+      globalThis.fetch = async (url, init) => {
+        calls.push({ url: String(url), init });
+        if (String(url).endsWith("/api/limits")) {
+          return new Response(JSON.stringify({ upload }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return okPublishResponse();
+      };
+      return withIo(() => main(["publish", htmlPath, "--title", "Painel"]));
+    };
+
+    const missing = await run({ maxBytes: htmlBytes - 1 });
+    assert.match(missing, /wise\.securepublish\.work\/k7f3qx2abc/);
+    assert.doesNotMatch(missing, /^Error:\s*$/m);
+    assert.ok(calls.some((c) => c.init?.method === "POST"));
+
+    const empty = await run({ maxBytes: htmlBytes - 1, message: "" });
+    assert.match(empty, /wise\.securepublish\.work\/k7f3qx2abc/);
+    assert.doesNotMatch(empty, /^Error:\s*$/m);
+    assert.ok(calls.some((c) => c.init?.method === "POST"));
+  });
+
+  it("skips the pre-check for the old {maxUploadBytes} shape and uploads", async () => {
+    const htmlPath = path.join(tmp, "dash.html");
+    fs.writeFileSync(htmlPath, "<html>hi</html>\n");
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      if (String(url).endsWith("/api/limits")) {
+        return new Response(JSON.stringify({ maxUploadBytes: 1 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
       return okPublishResponse();
     };
     const out = await withIo(() => main(["publish", htmlPath, "--title", "Painel"]));
     const post = calls.find((c) => c.init?.method === "POST");
     assert.ok(post, "expected POST /api/panels");
-    assert.equal(post.url, "https://app.securepublish.work/api/panels");
-    assert.match(out, /^warn:/m);
     assert.match(out, /wise\.securepublish\.work\/k7f3qx2abc/);
   });
 
-  it("publishes a file under 90% of the limit without a size warning", async () => {
-    process.env.SECUREPUBLISH_MAX_UPLOAD_BYTES = "1000";
+  it("sends PT Accept-Language on POST /api/panels when /api/limits is down", async () => {
+    const maxBytes = 3 * 1024 * 1024;
+    const htmlPath = path.join(tmp, "dash.html");
+    const html = "a".repeat(maxBytes + 1);
+    fs.writeFileSync(htmlPath, html);
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      if (String(url).endsWith("/api/limits")) {
+        return new Response("limits down", { status: 500 });
+      }
+      if (init?.method === "POST") {
+        return new Response("Payload Too Large", {
+          status: 413,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    };
+    await assert.rejects(
+      () => main(["publish", htmlPath, "--title", "Painel", "--lang", "pt"]),
+      (e) => {
+        assert.equal(e.message, SIZE_REFUSED_MESSAGE.pt);
+        return true;
+      }
+    );
+    const post = calls.find(
+      (c) => c.init?.method === "POST" && String(c.url).endsWith("/api/panels")
+    );
+    assert.ok(post, "expected POST /api/panels after /api/limits 500");
+    assert.equal(post.init.headers["accept-language"], "pt-BR");
+  });
+
+  it("uploads anyway when /api/limits fails or times out", async () => {
     const htmlPath = path.join(tmp, "dash.html");
     fs.writeFileSync(htmlPath, "<html>hi</html>\n");
     globalThis.fetch = async (url, init) => {
       calls.push({ url: String(url), init });
+      if (String(url).endsWith("/api/limits")) {
+        throw new Error("ECONNRESET");
+      }
+      return okPublishResponse();
+    };
+    const out = await withIo(() => main(["publish", htmlPath, "--title", "Painel"]));
+    const post = calls.find((c) => c.init?.method === "POST");
+    assert.ok(post, "expected POST /api/panels after limits failure");
+    assert.equal(post.url, "https://app.securepublish.work/api/panels");
+    assert.match(out, /wise\.securepublish\.work\/k7f3qx2abc/);
+    assert.doesNotMatch(out, /^warn:/m);
+  });
+
+  it("ignores SECUREPUBLISH_MAX_UPLOAD_BYTES and does not warn at 90%", async () => {
+    process.env.SECUREPUBLISH_MAX_UPLOAD_BYTES = "10";
+    const htmlPath = path.join(tmp, "dash.html");
+    const html = "y".repeat(200);
+    fs.writeFileSync(htmlPath, html);
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      if (String(url).endsWith("/api/limits")) {
+        throw new Error("limits down");
+      }
       return okPublishResponse();
     };
     const out = await withIo(() => main(["publish", htmlPath, "--title", "Painel"]));
     const post = calls.find((c) => c.init?.method === "POST");
     assert.ok(post);
+    assert.equal(JSON.parse(post.init.body).html, html);
     assert.doesNotMatch(out, /warn:.*MB/);
     assert.match(out, /wise\.securepublish\.work\/k7f3qx2abc/);
   });
 
-  it("maps a 413 from the server to the same too-large message", async () => {
-    process.env.SECUREPUBLISH_MAX_UPLOAD_BYTES = "10000";
+  it("prints the server message field unchanged on a 413 JSON body", async () => {
     const html = "<html>small</html>\n";
     const htmlPath = path.join(tmp, "dash.html");
     fs.writeFileSync(htmlPath, html);
+    const serverMessage = "O serviço recusou: arquivo acima do limite. Diminua as imagens.";
     globalThis.fetch = async (url, init) => {
       calls.push({ url: String(url), init });
+      if (String(url).endsWith("/api/limits")) {
+        return new Response(
+          JSON.stringify({ upload: { maxBytes: 10_000_000, message: "unused precheck" } }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
       if (init?.method === "POST") {
-        return new Response(JSON.stringify({ error: "payload_too_large" }), {
+        return new Response(JSON.stringify({ error: "payload_too_large", message: serverMessage }), {
           status: 413,
           headers: { "content-type": "application/json" },
         });
@@ -186,10 +392,8 @@ describe("CLI publish upload size limit", () => {
     await assert.rejects(
       () => main(["publish", htmlPath, "--title", "Painel"]),
       (e) => {
-        assert.equal(
-          e.message,
-          uploadTooLargeMessage(Buffer.byteLength(html), 10000)
-        );
+        assert.equal(e.message, serverMessage);
+        assert.doesNotMatch(e.message, /too large to publish/i);
         assert.doesNotMatch(e.message, /Não consegui publicar agora/);
         return true;
       }
@@ -198,26 +402,96 @@ describe("CLI publish upload size limit", () => {
     assert.equal(post.length, 1);
   });
 
-  it("prefers maxUploadBytes from a 413 body when the server limit changed", async () => {
-    process.env.SECUREPUBLISH_MAX_UPLOAD_BYTES = "10000";
-    const html = "<html>small</html>\n";
+  it("uses a generic size line when a 413 has no JSON, empty message, or HTML", async () => {
     const htmlPath = path.join(tmp, "dash.html");
-    fs.writeFileSync(htmlPath, html);
-    globalThis.fetch = async (_url, init) => {
-      if (init?.method === "POST") {
-        return new Response(JSON.stringify({ error: "payload_too_large", maxUploadBytes: 512 }), {
-          status: 413,
-          headers: { "content-type": "application/json" },
-        });
+    fs.writeFileSync(htmlPath, "<html>small</html>\n");
+
+    const publish413 = async (body, contentType, extraFlags = []) => {
+      globalThis.fetch = async (url, init) => {
+        if (String(url).endsWith("/api/limits")) throw new Error("limits down");
+        if (init?.method === "POST") {
+          return new Response(body, {
+            status: 413,
+            headers: { "content-type": contentType },
+          });
+        }
+        return new Response("unexpected", { status: 500 });
+      };
+      try {
+        await main(["publish", htmlPath, "--title", "Painel", ...extraFlags]);
+        throw new Error("expected publish to fail");
+      } catch (e) {
+        return e.message;
       }
-      return new Response("unexpected", { status: 500 });
+    };
+
+    assert.equal(await publish413("Payload Too Large", "text/plain"), SIZE_REFUSED_MESSAGE.pt);
+    assert.equal(
+      await publish413(JSON.stringify({ message: "" }), "application/json"),
+      SIZE_REFUSED_MESSAGE.pt
+    );
+    const htmlDump = "<!DOCTYPE html><html><body><h1>413</h1>" + "y".repeat(400) + "</body></html>";
+    const fromHtml = await publish413(htmlDump, "text/html");
+    assert.equal(fromHtml, SIZE_REFUSED_MESSAGE.pt);
+    assert.doesNotMatch(fromHtml, /<!DOCTYPE|<html|<h1/i);
+    assert.equal(
+      await publish413("Payload Too Large", "text/plain", ["--lang", "en"]),
+      SIZE_REFUSED_MESSAGE.en
+    );
+  });
+
+  it("sanitizes 413 server text (ANSI/control stripped, length capped)", async () => {
+    const htmlPath = path.join(tmp, "dash.html");
+    fs.writeFileSync(htmlPath, "<html>small</html>\n");
+    const injected = "ok\x1b[31mX\x1b[0m\x07" + "W".repeat(600);
+    globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith("/api/limits")) {
+        throw new Error("limits down");
+      }
+      return new Response(JSON.stringify({ message: injected }), {
+        status: 413,
+        headers: { "content-type": "application/json" },
+      });
     };
     await assert.rejects(
       () => main(["publish", htmlPath, "--title", "Painel"]),
       (e) => {
-        assert.equal(e.message, uploadTooLargeMessage(Buffer.byteLength(html), 512));
+        assert.equal(e.message.includes("\x1b"), false);
+        assert.equal(e.message.includes("\x07"), false);
+        assert.equal(e.message.length, 500);
+        assert.match(e.message, /^okX/);
         return true;
       }
     );
+  });
+
+  it("does not write Cloudflare KV even with --operator and a Cloudflare token", async () => {
+    process.env.CLOUDFLARE_API_TOKEN = "cf-token-should-not-be-used";
+    process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
+    process.env.SECURE_PUBLISH_KV_NAMESPACE_ID = "ns";
+    const htmlPath = path.join(tmp, "dash.html");
+    fs.writeFileSync(htmlPath, "<html>hi</html>\n");
+    globalThis.fetch = async (url, init) => {
+      const href = String(url);
+      calls.push({ url: href, init });
+      if (href.includes("api.cloudflare.com")) {
+        throw new Error("public CLI must not write Cloudflare KV");
+      }
+      if (href.endsWith("/api/limits")) {
+        return new Response("nope", { status: 404 });
+      }
+      return okPublishResponse();
+    };
+    const out = await withIo(() =>
+      main(["publish", htmlPath, "--title", "Painel", "--operator"])
+    );
+    assert.equal(
+      calls.some((c) => String(c.url).includes("api.cloudflare.com")),
+      false
+    );
+    const post = calls.find((c) => c.init?.method === "POST");
+    assert.ok(post);
+    assert.equal(post.url, "https://app.securepublish.work/api/panels");
+    assert.match(out, /wise\.securepublish\.work\/k7f3qx2abc/);
   });
 });
