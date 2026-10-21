@@ -63,6 +63,18 @@ describe("root package exposes CLI for npm", () => {
     assert.equal(pkg.repository.url, NPM_REPO_URL);
   });
 
+  it("does not export a Cloudflare KV writer from the public package entry", async () => {
+    const mod = await import(path.join(root, "packages/cli/src/index.js"));
+    assert.equal("kvPut" in mod, false);
+    assert.equal("kvDelete" in mod, false);
+    const indexSrc = fs.readFileSync(path.join(root, "packages/cli/src/index.js"), "utf8");
+    assert.doesNotMatch(indexSrc, /\bkvPut\b/);
+    assert.doesNotMatch(indexSrc, /\bkvDelete\b/);
+    const cfSrc = fs.readFileSync(path.join(root, "packages/cli/src/cf-api.js"), "utf8");
+    assert.doesNotMatch(cfSrc, /export async function kvPut/);
+    assert.doesNotMatch(cfSrc, /export async function kvDelete/);
+  });
+
   it("resolved bin prints our CLI help (not artelydev/secure-publish)", () => {
     const bin = path.join(root, "packages/cli/bin", `${BIN_NAME}.cjs`);
     const r = spawnSync(process.execPath, [bin, "help"], { encoding: "utf8" });

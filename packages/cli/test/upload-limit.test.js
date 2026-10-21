@@ -50,6 +50,37 @@ describe("sanitizeServerText", () => {
     assert.equal(sanitizeServerText(undefined), "");
     assert.equal(sanitizeServerText(null), "");
   });
+
+  it("strips C1 controls including CSI (U+009B)", () => {
+    const raw = "ok\u0080\u009b[31mRED\u009c\u009fend";
+    const out = sanitizeServerText(raw);
+    assert.equal(out.includes("\u0080"), false);
+    assert.equal(out.includes("\u009b"), false);
+    assert.equal(out.includes("\u009c"), false);
+    assert.equal(out.includes("\u009f"), false);
+    assert.match(out, /ok/);
+    assert.match(out, /end/);
+  });
+
+  it("strips bidi controls (U+202A–U+202E, U+2066–U+2069)", () => {
+    const raw = "https://safe.example/\u202e\u202amalicious\u202c \u2066hidden\u2069";
+    const out = sanitizeServerText(raw);
+    for (const ch of [
+      "\u202a",
+      "\u202b",
+      "\u202c",
+      "\u202d",
+      "\u202e",
+      "\u2066",
+      "\u2067",
+      "\u2068",
+      "\u2069",
+    ]) {
+      assert.equal(out.includes(ch), false, `expected ${JSON.stringify(ch)} stripped`);
+    }
+    assert.match(out, /https:\/\/safe\.example\//);
+    assert.match(out, /malicious/);
+  });
 });
 
 describe("serverSizeErrorMessage", () => {
@@ -119,6 +150,38 @@ describe("fetchUploadLimit", () => {
       },
     });
     assert.equal(init.headers["accept-language"], "pt");
+  });
+
+  it("skips pre-check when upload.message is missing or empty", async () => {
+    const missing = await fetchUploadLimit({
+      apiBase: "https://app.example",
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ upload: { maxBytes: 10 } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+    assert.equal(missing, null);
+
+    const empty = await fetchUploadLimit({
+      apiBase: "https://app.example",
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ upload: { maxBytes: 10, message: "" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+    assert.equal(empty, null);
+
+    const blank = await fetchUploadLimit({
+      apiBase: "https://app.example",
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ upload: { maxBytes: 10, message: "   " } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+    assert.equal(blank, null);
   });
 
   it("skips pre-check when the response is the legacy {maxUploadBytes} shape", async () => {

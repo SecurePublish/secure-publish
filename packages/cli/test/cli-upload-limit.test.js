@@ -198,6 +198,38 @@ describe("CLI publish upload size limit", () => {
     assert.equal(limits.init.headers["accept-language"], "en");
   });
 
+  it("uploads anyway when upload.message is empty or missing (never a blank error)", async () => {
+    const htmlPath = path.join(tmp, "dash.html");
+    const html = "z".repeat(80);
+    fs.writeFileSync(htmlPath, html);
+    const payloadBytes = Buffer.byteLength(expectedPayload(html), "utf8");
+
+    const run = async (upload) => {
+      calls = [];
+      globalThis.fetch = async (url, init) => {
+        calls.push({ url: String(url), init });
+        if (String(url).endsWith("/api/limits")) {
+          return new Response(JSON.stringify({ upload }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return okPublishResponse();
+      };
+      return withIo(() => main(["publish", htmlPath, "--title", "Painel"]));
+    };
+
+    const missing = await run({ maxBytes: payloadBytes - 1 });
+    assert.match(missing, /wise\.securepublish\.work\/k7f3qx2abc/);
+    assert.doesNotMatch(missing, /^Error:\s*$/m);
+    assert.ok(calls.some((c) => c.init?.method === "POST"));
+
+    const empty = await run({ maxBytes: payloadBytes - 1, message: "" });
+    assert.match(empty, /wise\.securepublish\.work\/k7f3qx2abc/);
+    assert.doesNotMatch(empty, /^Error:\s*$/m);
+    assert.ok(calls.some((c) => c.init?.method === "POST"));
+  });
+
   it("skips the pre-check for the old {maxUploadBytes} shape and uploads", async () => {
     const htmlPath = path.join(tmp, "dash.html");
     fs.writeFileSync(htmlPath, "<html>hi</html>\n");

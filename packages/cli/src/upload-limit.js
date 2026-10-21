@@ -22,8 +22,9 @@ export function sanitizeServerText(text, maxLen = SERVER_TEXT_MAX_CHARS) {
   s = s.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
   s = s.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "");
   s = s.replace(/\u001b[@-Z\\-_]/g, "");
-  // Keep TAB/LF; drop CR and other C0 so the terminal cannot be rewritten.
-  s = s.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "");
+  // Keep TAB/LF; drop CR, other C0, DEL, and C1 (U+009B is CSI in some terminals).
+  s = s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");
+  s = s.replace(/[\u202a-\u202e\u2066-\u2069]/g, "");
   if (s.length > maxLen) s = s.slice(0, maxLen);
   return s;
 }
@@ -46,6 +47,7 @@ export function serverSizeErrorMessage(rawText) {
  * Fetch the server-owned upload limit.
  * New shape: `{ upload: { maxBytes, message } }`.
  * Legacy `{ maxUploadBytes }` (no `upload`) → null (skip the pre-check).
+ * Missing/empty `upload.message` → null (skip; never a blank error).
  * Network/timeout/invalid → null (upload anyway).
  */
 export async function fetchUploadLimit({
@@ -75,10 +77,9 @@ export async function fetchUploadLimit({
     if (!upload || typeof upload !== "object") return null;
     const maxBytes = parsePositiveInt(upload.maxBytes);
     if (maxBytes == null) return null;
-    return {
-      maxBytes,
-      message: typeof upload.message === "string" ? upload.message : "",
-    };
+    const message = typeof upload.message === "string" ? upload.message : "";
+    if (!message.trim()) return null;
+    return { maxBytes, message };
   } catch {
     return null;
   } finally {

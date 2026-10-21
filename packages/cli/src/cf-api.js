@@ -37,21 +37,6 @@ async function cfFetch(path, { method = "GET", token, body, contentType } = {}) 
   return json;
 }
 
-export async function kvPut({ accountId, namespaceId, token, key, value }) {
-  const path = `/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(key)}`;
-  return cfFetch(path, {
-    method: "PUT",
-    token,
-    body: value,
-    contentType: "application/json; charset=utf-8",
-  });
-}
-
-export async function kvDelete({ accountId, namespaceId, token, key }) {
-  const path = `/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(key)}`;
-  return cfFetch(path, { method: "DELETE", token });
-}
-
 export async function kvList({ accountId, namespaceId, token, limit = 1000 }) {
   const keys = [];
   let cursor = undefined;
@@ -66,7 +51,6 @@ export async function kvList({ accountId, namespaceId, token, limit = 1000 }) {
   } while (cursor);
   return keys;
 }
-
 
 export async function kvGet({ accountId, namespaceId, token, key }) {
   const path = `/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(key)}`;
