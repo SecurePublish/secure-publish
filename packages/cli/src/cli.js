@@ -93,7 +93,7 @@ Usage:
   ${CLI} help
 
 Run \`login\` to print the URL and code (it flushes and exits at once), enter the code in the browser, then \`login --finish\`. Publishing and revoke use that account. \`login --wait\` keeps the old blocking flow.
-Do not set CLOUDFLARE_API_TOKEN. Publish and revoke go through the signed-in account so the service can enforce its size limit.
+Do not set CLOUDFLARE_API_TOKEN for publish or revoke. Those commands use the signed-in account so the service can enforce its size limit.
 Only the person who published a link or the company account owner can revoke it.
 
 Optional:

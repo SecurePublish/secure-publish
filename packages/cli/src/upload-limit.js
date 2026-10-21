@@ -77,7 +77,7 @@ export async function fetchUploadLimit({
     if (maxBytes == null) return null;
     return {
       maxBytes,
-      message: upload.message == null ? "" : String(upload.message),
+      message: typeof upload.message === "string" ? upload.message : "",
     };
   } catch {
     return null;

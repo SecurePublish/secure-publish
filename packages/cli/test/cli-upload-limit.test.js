@@ -148,6 +148,37 @@ describe("CLI publish upload size limit", () => {
     assert.equal(calls[0].init.headers["accept-language"], "pt");
   });
 
+  it("compares the JSON request body size, not the HTML file size alone", async () => {
+    const htmlPath = path.join(tmp, "dash.html");
+    const html = "z".repeat(20);
+    fs.writeFileSync(htmlPath, html);
+    const payload = expectedPayload(html);
+    const htmlBytes = Buffer.byteLength(html, "utf8");
+    const payloadBytes = Buffer.byteLength(payload, "utf8");
+    assert.ok(payloadBytes > htmlBytes);
+    const serverMessage = "O corpo da publicação passa do limite.";
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      if (String(url).endsWith("/api/limits")) {
+        return new Response(
+          JSON.stringify({
+            upload: { maxBytes: htmlBytes + 1, message: serverMessage },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      throw new Error("POST should not run: JSON body exceeds maxBytes even if HTML does not");
+    };
+    await assert.rejects(
+      () => main(["publish", htmlPath, "--title", "Painel"]),
+      (e) => {
+        assert.equal(e.message, serverMessage);
+        return true;
+      }
+    );
+    assert.equal(calls.filter((c) => c.init?.method === "POST").length, 0);
+  });
+
   it("sends Accept-Language from --lang on GET /api/limits", async () => {
     const htmlPath = path.join(tmp, "dash.html");
     fs.writeFileSync(htmlPath, "<html>hi</html>\n");
