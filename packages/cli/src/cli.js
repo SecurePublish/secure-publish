@@ -455,9 +455,10 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
   const payload = JSON.stringify(body);
   const lang = cliLang(flags);
   const limit = await fetchUploadLimit({ apiBase, lang });
+  // upload.maxBytes is the decoded HTML limit, not the JSON envelope.
   if (
     limit &&
-    isOverUploadLimit(Buffer.byteLength(payload, "utf8"), limit.maxBytes)
+    isOverUploadLimit(Buffer.byteLength(body.html, "utf8"), limit.maxBytes)
   ) {
     throw new Error(sanitizeServerText(limit.message));
   }

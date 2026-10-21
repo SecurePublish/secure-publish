@@ -20,10 +20,12 @@ describe("LIMITS_FETCH_TIMEOUT_MS", () => {
 });
 
 describe("isOverUploadLimit", () => {
-  it("is over only when the request body is strictly larger than maxBytes", () => {
+  it("is over only when the HTML UTF-8 size is strictly larger than maxBytes", () => {
     assert.equal(isOverUploadLimit(101, 100), true);
     assert.equal(isOverUploadLimit(100, 100), false);
     assert.equal(isOverUploadLimit(1, 100), false);
+    assert.equal(isOverUploadLimit(3145728, 3145728), false);
+    assert.equal(isOverUploadLimit(3145729, 3145728), true);
   });
 });
 
