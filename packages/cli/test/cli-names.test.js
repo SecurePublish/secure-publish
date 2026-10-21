@@ -74,7 +74,14 @@ describe("CLI named panel links", () => {
     fs.writeFileSync(htmlPath, "<html>hi</html>\n");
     const canon = "https://wise.securepublish.work/k7f3qx2abc/performance-outubro-2026";
     globalThis.fetch = async (url, init) => {
-      calls.push({ url: String(url), init });
+      const href = String(url);
+      if (href.endsWith("/api/limits")) {
+        return new Response(JSON.stringify({ maxUploadBytes: 3145728 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      calls.push({ url: href, init });
       return new Response(
         JSON.stringify({
           ok: true,

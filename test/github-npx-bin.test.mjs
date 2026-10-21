@@ -1,5 +1,5 @@
 /**
- * Ensures agents can run OUR CLI via `npx --yes @securepublish/cli@1.0.2`
+ * Ensures agents can run OUR CLI via `npx --yes @securepublish/cli@1.0.3`
  * (not the unrelated public npm package named secure-publish).
  * The binary exposed by that install is `securepublish-cli` only.
  * npx does not leave that bin on PATH — docs must use the full npx form.
@@ -14,7 +14,7 @@ import { describe, it } from "node:test";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BIN_NAME = "securepublish-cli";
 const PKG_NAME = "@securepublish/cli";
-const PKG_VERSION = "1.0.2";
+const PKG_VERSION = "1.0.3";
 const BIN_REL = `packages/cli/bin/${BIN_NAME}.cjs`;
 const OUR_HELP_MARKER = `${BIN_NAME} — publish AI HTML dashboards behind company SSO`;
 const NPM_NPX = `npx --yes ${PKG_NAME}@${PKG_VERSION}`;
@@ -81,7 +81,7 @@ describe("skill documents npm package invocations only", () => {
     "utf8"
   );
 
-  it("documents full npx @securepublish/cli@1.0.2 form for login and publish", () => {
+  it("documents full npx @securepublish/cli@1.0.3 form for login and publish", () => {
     assert.match(skill, new RegExp(`${NPM_NPX_RE} login`));
     assert.match(skill, new RegExp(`${NPM_NPX_RE} login --finish`));
     assert.match(skill, new RegExp(`${NPM_NPX_RE} publish`));
@@ -121,6 +121,17 @@ describe("skill documents npm package invocations only", () => {
     );
   });
 
+  it("documents the publish upload size limit and SECUREPUBLISH_MAX_UPLOAD_BYTES", () => {
+    assert.match(skill, /SECUREPUBLISH_MAX_UPLOAD_BYTES/);
+    assert.match(skill, /3145728/);
+    assert.match(skill, /GET \/api\/limits/);
+    assert.match(skill, /too large to publish/i);
+    assert.match(
+      skill,
+      /Do not use the generic line below for this case/
+    );
+  });
+
   it("keeps user-facing Portuguese lines unchanged", () => {
     assert.match(
       skill,
@@ -156,7 +167,7 @@ describe("skill documents npm package invocations only", () => {
 describe("README documents npm package invocations", () => {
   const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 
-  it("uses full npx @securepublish/cli@1.0.2 form for runnable CLI examples", () => {
+  it("uses full npx @securepublish/cli@1.0.3 form for runnable CLI examples", () => {
     assert.match(readme, new RegExp(`${NPM_NPX_RE} login`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} login --finish`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} publish`));
@@ -190,6 +201,13 @@ describe("README documents npm package invocations", () => {
         `must not instruct installing public npm package, got: ${line}`
       );
     }
+  });
+
+  it("documents the publish upload size limit and SECUREPUBLISH_MAX_UPLOAD_BYTES", () => {
+    assert.match(readme, /SECUREPUBLISH_MAX_UPLOAD_BYTES/);
+    assert.match(readme, /3145728/);
+    assert.match(readme, /GET \/api\/limits/);
+    assert.match(readme, /3 MB/);
   });
 
   it("documents Node 22 LTS in Requisitos", () => {

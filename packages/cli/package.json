@@ -1,6 +1,6 @@
 {
   "name": "@securepublish/cli",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "CLI to publish AI HTML dashboards behind company SSO",
   "type": "module",
   "bin": {

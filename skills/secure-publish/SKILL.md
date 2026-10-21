@@ -25,7 +25,7 @@ npx skills add https://github.com/SecurePublish/secure-publish --skill "secure-p
 Run the CLI with the scoped npm package (not the public npm package named `secure-publish` — that is a different project). Do **not** run `npm install secure-publish`, `npm install -g secure-publish`, or `npx secure-publish`. Use only the full form every time (npx does **not** leave `securepublish-cli` on PATH):
 
 ```bash
-npx --yes @securepublish/cli@1.0.2 <subcommand>
+npx --yes @securepublish/cli@1.0.3 <subcommand>
 ```
 
 That runs this repo’s `securepublish-cli` binary for that one invocation (login, publish, help, and the rest).
@@ -47,7 +47,7 @@ Say only these lines about sign-in and publish. Do not explain the mechanism.
 
 If this machine is not signed in yet, run `login` then `login --finish` as two separate commands. Never run either through an output-condensing filter or wrapper (for example `rtk` in Claude Code): those buffer command output until the process exits, so the user never sees the code. Run the CLI directly.
 
-1. Run `npx --yes @securepublish/cli@1.0.2 login` in the foreground and wait for it to exit (it prints the URL and `user_code`, flushes, then exits 0 immediately). Do not background it.
+1. Run `npx --yes @securepublish/cli@1.0.3 login` in the foreground and wait for it to exit (it prints the URL and `user_code`, flushes, then exits 0 immediately). Do not background it.
 
 2. In **your own message**, show the verification URL and the `user_code` from that CLI output (replace `{user_code}`; do not invent a code or URL). Say exactly (PT):
 
@@ -59,7 +59,7 @@ EN:
 
 > I'll open the sign-in page. Sign in with your company account and enter the code {user_code}.
 
-3. Then run `npx --yes @securepublish/cli@1.0.2 login --finish` (also directly, no output filter/wrapper) and wait for it to complete.
+3. Then run `npx --yes @securepublish/cli@1.0.3 login --finish` (also directly, no output filter/wrapper) and wait for it to complete.
 
 When `login --finish` succeeds, say exactly:
 
@@ -70,11 +70,11 @@ Use the host the command printed. If there is no host yet, ask where to publish.
 Then publish:
 
 ```bash
-npx --yes @securepublish/cli@1.0.2 publish ./dashboard.html --title "Painel" --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.2 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.2 rename <id-or-url> --name "performance-out-26"
-npx --yes @securepublish/cli@1.0.2 rename <id-or-url> --no-name
-npx --yes @securepublish/cli@1.0.2 revoke <id-or-url>
+npx --yes @securepublish/cli@1.0.3 publish ./dashboard.html --title "Painel" --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.3 publish ./dashboard.html --to ana@empresa.com,bia@empresa.com --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.3 rename <id-or-url> --name "performance-out-26"
+npx --yes @securepublish/cli@1.0.3 rename <id-or-url> --no-name
+npx --yes @securepublish/cli@1.0.3 revoke <id-or-url>
 ```
 
 **Nome do link**
@@ -99,13 +99,25 @@ If they passed emails:
 
 > Publicado só para {emails}: {url}
 
-On any failure, say exactly:
+If the CLI says the file is too large to publish (or exits after a 413), tell the user that. Use the file size and the limit in MB from the CLI output, plus its tips. Do not guess that size was the problem. Do not retry the same file. Do not use the generic line below for this case.
+
+On any other failure, say exactly:
 
 > Não consegui publicar agora. A conta está ligada em {host}. Tenta de novo em instantes.
 
 If the command says the account is not linked, go back to the login line. Never ask them for an infrastructure secret.
 
-To revoke, pass the published URL or the panel id to `npx --yes @securepublish/cli@1.0.2 revoke <id-or-url>`. The signed-in account is enough; do not ask for Cloudflare credentials. If the CLI says the link is already gone, treat that as success.
+To revoke, pass the published URL or the panel id to `npx --yes @securepublish/cli@1.0.3 revoke <id-or-url>`. The signed-in account is enough; do not ask for Cloudflare credentials. If the CLI says the link is already gone, treat that as success.
+
+## Publish size limit
+
+Each publish has an upload size limit. The default is **3 MB** (`3 * 1024 * 1024` = 3145728 bytes). The CLI resolves it in this order:
+
+1. Env var `SECUREPUBLISH_MAX_UPLOAD_BYTES` (bytes), if set to a positive integer
+2. `GET /api/limits` on the configured server, JSON `{"maxUploadBytes": <number>}` (short timeout; cached for the run)
+3. Fallback 3145728 if the endpoint is missing or fails
+
+Before publishing HTML with inlined images, check the file size. If it is over the limit, tell the user clearly (file size, limit in MB) and suggest: compress or inline fewer images, move large images or assets out of the page, or split into several pages. A file close to the limit (over 90%) may still publish; mention the warning if the CLI prints one.
 
 ## Access (V1)
 
@@ -126,6 +138,7 @@ To revoke, pass the published URL or the panel id to `npx --yes @securepublish/c
 | Email not on company domain | Seu e-mail não é do domínio desta empresa. Peça acesso ou use a conta corporativa. | Your email isn’t on this company’s domain. Ask for access or use your work account. |
 | Signed in, no permission | Você está logado, mas não tem permissão neste dashboard. | You’re signed in, but you don’t have access to this dashboard. |
 | Missing emails when they asked for a list | Inclua pelo menos um e-mail | Add at least one email |
+| File over the per-publish upload limit | Este arquivo é grande demais para publicar. Ele tem {size} MB; o limite por publicação é {limit} MB. Comprima ou coloque menos imagens no HTML, tire imagens grandes da página, ou divida em várias páginas. | This file is too large to publish. There is a per-publish upload limit. This file is {size} MB; the limit is {limit} MB. Compress or inline fewer images, move large images or assets out, split into several pages. |
 
 ## Do not claim
 

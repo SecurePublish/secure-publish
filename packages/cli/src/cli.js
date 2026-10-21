@@ -16,6 +16,15 @@ import {
   publishSuccessMessage,
   normalizeDomains,
 } from "./acl.js";
+import {
+  isNearUploadLimit,
+  isOverUploadLimit,
+  isSizeTooLargeResponse,
+  nearLimitWarning,
+  parsePositiveInt,
+  resolveMaxUploadBytes,
+  uploadTooLargeMessage,
+} from "./upload-limit.js";
 
 const CLI = "securepublish-cli";
 
@@ -506,6 +515,14 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
     throw new Error(`Conta não ligada nesta máquina. Rode ${CLI} login.`);
   }
   const apiBase = (session.apiBase || apiBaseOf(cfg)).replace(/\/$/, "");
+  const fileBytes = Buffer.byteLength(html, "utf8");
+  const maxBytes = await resolveMaxUploadBytes({ apiBase });
+  if (isOverUploadLimit(fileBytes, maxBytes)) {
+    throw new Error(uploadTooLargeMessage(fileBytes, maxBytes));
+  }
+  if (isNearUploadLimit(fileBytes, maxBytes)) {
+    console.error(nearLimitWarning(fileBytes, maxBytes));
+  }
   const title =
     flags.title || path.basename(filePath, path.extname(filePath)) || "untitled";
   const body = { html, title };
@@ -522,6 +539,10 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
   });
   const data = await res.json().catch(() => ({}));
   const host = data.host || session.host || "";
+  if (isSizeTooLargeResponse(res, data)) {
+    const serverLimit = parsePositiveInt(data?.maxUploadBytes) ?? maxBytes;
+    throw new Error(uploadTooLargeMessage(fileBytes, serverLimit));
+  }
   if (!res.ok) {
     if (res.status === 401) clearPublishSession();
     const where = host ? ` A conta está ligada em ${host}.` : "";
