@@ -61,6 +61,9 @@ describe("root package exposes CLI for npm", () => {
     assert.equal(pkg.bin[BIN_NAME], `./bin/${BIN_NAME}.cjs`);
     assert.match(String(pkg.engines?.node || ""), />=20/);
     assert.equal(pkg.repository.url, NPM_REPO_URL);
+    const keywords = pkg.keywords || [];
+    assert.equal(keywords.includes("cloudflare"), false);
+    assert.equal(keywords.includes("kv"), false);
   });
 
   it("does not ship Cloudflare KV helpers in the public package", async () => {

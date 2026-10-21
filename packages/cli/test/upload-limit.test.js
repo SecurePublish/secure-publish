@@ -94,10 +94,13 @@ describe("serverSizeErrorMessage", () => {
   });
 
   it("uses a short generic line when the 413 has no usable JSON message", () => {
-    assert.equal(SIZE_REFUSED_MESSAGE.pt, "O serviço recusou o envio porque o arquivo passa do limite de tamanho.");
+    assert.equal(
+      SIZE_REFUSED_MESSAGE.pt,
+      "O servidor recusou o arquivo por ser grande demais. Diminua o arquivo e tente de novo."
+    );
     assert.equal(
       SIZE_REFUSED_MESSAGE.en,
-      "The service refused the upload because the file is over the size limit."
+      "The server rejected this file as too large. Make it smaller and try again."
     );
     assert.equal(serverSizeErrorMessage("Payload Too Large"), SIZE_REFUSED_MESSAGE.pt);
     assert.equal(serverSizeErrorMessage("Payload Too Large", "en"), SIZE_REFUSED_MESSAGE.en);

@@ -2,8 +2,8 @@
 export const LIMITS_FETCH_TIMEOUT_MS = 3000;
 export const SERVER_TEXT_MAX_CHARS = 500;
 export const SIZE_REFUSED_MESSAGE = {
-  pt: "O serviço recusou o envio porque o arquivo passa do limite de tamanho.",
-  en: "The service refused the upload because the file is over the size limit.",
+  pt: "O servidor recusou o arquivo por ser grande demais. Diminua o arquivo e tente de novo.",
+  en: "The server rejected this file as too large. Make it smaller and try again.",
 };
 
 export function parsePositiveInt(raw) {
