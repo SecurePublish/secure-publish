@@ -1,6 +1,6 @@
 {
   "name": "@securepublish/cli",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "CLI to publish HTML pages that only your company or listed people can open",
   "bin": {
     "securepublish-cli": "packages/cli/bin/securepublish-cli.cjs"
