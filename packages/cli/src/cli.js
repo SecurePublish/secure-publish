@@ -16,6 +16,7 @@ import {
   normalizeDomains,
 } from "./acl.js";
 import {
+  acceptLanguageHeader,
   fetchUploadLimit,
   isOverUploadLimit,
   sanitizeServerText,
@@ -466,6 +467,7 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
     method: "POST",
     headers: {
       accept: "application/json",
+      "accept-language": acceptLanguageHeader(lang),
       "content-type": "application/json",
       authorization: `Bearer ${session.publishToken}`,
     },

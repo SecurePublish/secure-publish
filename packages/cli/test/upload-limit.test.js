@@ -7,11 +7,20 @@ import {
   LIMITS_FETCH_TIMEOUT_MS,
   SERVER_TEXT_MAX_CHARS,
   SIZE_REFUSED_MESSAGE,
+  acceptLanguageHeader,
   fetchUploadLimit,
   isOverUploadLimit,
   sanitizeServerText,
   serverSizeErrorMessage,
 } from "../src/upload-limit.js";
+
+describe("acceptLanguageHeader", () => {
+  it("resolves en to en and everything else to pt-BR", () => {
+    assert.equal(acceptLanguageHeader("en"), "en");
+    assert.equal(acceptLanguageHeader("pt"), "pt-BR");
+    assert.equal(acceptLanguageHeader(undefined), "pt-BR");
+  });
+});
 
 describe("LIMITS_FETCH_TIMEOUT_MS", () => {
   it("is 3 seconds", () => {
@@ -175,7 +184,7 @@ describe("fetchUploadLimit", () => {
         });
       },
     });
-    assert.equal(init.headers["accept-language"], "pt");
+    assert.equal(init.headers["accept-language"], "pt-BR");
   });
 
   it("skips pre-check when upload.message is missing or empty", async () => {

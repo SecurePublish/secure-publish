@@ -6,6 +6,11 @@ export const SIZE_REFUSED_MESSAGE = {
   en: "The server rejected this file as too large. Make it smaller and try again.",
 };
 
+/** Resolved Accept-Language for /api/limits and POST /api/panels. */
+export function acceptLanguageHeader(lang) {
+  return lang === "en" ? "en" : "pt-BR";
+}
+
 export function parsePositiveInt(raw) {
   if (raw == null || raw === "") return null;
   const n = Number(String(raw).trim());
@@ -68,7 +73,6 @@ export async function fetchUploadLimit({
   const base = String(apiBase || "").replace(/\/$/, "");
   if (!base || typeof fetchImpl !== "function") return null;
 
-  const acceptLanguage = lang === "en" ? "en" : "pt";
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -76,7 +80,7 @@ export async function fetchUploadLimit({
       method: "GET",
       headers: {
         accept: "application/json",
-        "accept-language": acceptLanguage,
+        "accept-language": acceptLanguageHeader(lang),
       },
       signal: ctrl.signal,
     });

@@ -145,7 +145,7 @@ describe("CLI publish upload size limit", () => {
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, "https://app.securepublish.work/api/limits");
     assert.equal(calls[0].init.method, "GET");
-    assert.equal(calls[0].init.headers["accept-language"], "pt");
+    assert.equal(calls[0].init.headers["accept-language"], "pt-BR");
   });
 
   it("compares decoded HTML UTF-8 bytes to upload.maxBytes, not the JSON envelope", async () => {
@@ -296,6 +296,38 @@ describe("CLI publish upload size limit", () => {
     const post = calls.find((c) => c.init?.method === "POST");
     assert.ok(post, "expected POST /api/panels");
     assert.match(out, /wise\.securepublish\.work\/k7f3qx2abc/);
+  });
+
+  it("sends PT Accept-Language on POST /api/panels when /api/limits is down", async () => {
+    const maxBytes = 3 * 1024 * 1024;
+    const htmlPath = path.join(tmp, "dash.html");
+    const html = "a".repeat(maxBytes + 1);
+    fs.writeFileSync(htmlPath, html);
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      if (String(url).endsWith("/api/limits")) {
+        return new Response("limits down", { status: 500 });
+      }
+      if (init?.method === "POST") {
+        return new Response("Payload Too Large", {
+          status: 413,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    };
+    await assert.rejects(
+      () => main(["publish", htmlPath, "--title", "Painel", "--lang", "pt"]),
+      (e) => {
+        assert.equal(e.message, SIZE_REFUSED_MESSAGE.pt);
+        return true;
+      }
+    );
+    const post = calls.find(
+      (c) => c.init?.method === "POST" && String(c.url).endsWith("/api/panels")
+    );
+    assert.ok(post, "expected POST /api/panels after /api/limits 500");
+    assert.equal(post.init.headers["accept-language"], "pt-BR");
   });
 
   it("uploads anyway when /api/limits fails or times out", async () => {
