@@ -21,9 +21,9 @@ description: >-
 - npm: https://www.npmjs.com/package/@securepublish/cli
 - Source for this version: https://unpkg.com/browse/@securepublish/cli@1.0.4/ · https://cdn.jsdelivr.net/npm/@securepublish/cli@1.0.4/
 
-**Sobre o login por código.** A CLI mostra um código e abre app.securepublish.work. Confira o endereço, digite o código lá e só aprove se foi você quem começou o login no terminal. Nunca pedimos esse código por e-mail, chat ou telefone.
+**Sobre o login por código.** O código aparece no seu próprio terminal; digite só em app.securepublish.work/device, depois de entrar com sua conta. Nunca pedimos esse código por e-mail, chat ou telefone. Se alguém te mandar um código, não digite.
 
-**About code sign-in.** The CLI shows a code and opens app.securepublish.work. Check the address, type the code there, and only approve if you started the login in the terminal. We never ask for this code by email, chat, or phone.
+**About code sign-in.** The code appears in your own terminal; type it only at app.securepublish.work/device, after you sign in with your account. We never ask for this code by email, chat, or phone. If someone sends you a code, do not type it.
 
 Security & data: https://securepublish.work/security · PT: https://securepublish.work/pt/seguranca
 
@@ -126,13 +126,13 @@ On any other failure, say exactly:
 
 If the command says the account is not linked, go back to the login line. Never ask them for an infrastructure secret.
 
-To revoke, pass the published URL or the panel id to `npx --yes @securepublish/cli@1.0.4 revoke <id-or-url>`. The signed-in account is enough; do not ask for Cloudflare credentials. If the CLI says the link is already gone, treat that as success.
+To revoke, pass the published URL or the panel id to `npx --yes @securepublish/cli@1.0.4 revoke <id-or-url>`. The signed-in account is enough; do not ask for extra credentials. If the CLI says the link is already gone, treat that as success.
 
 ## Publish
 
-publish — publica um arquivo HTML. Por padrão, todo mundo com e-mail do domínio da sua empresa consegue abrir; use --to para liberar só para e-mails específicos. Existe um limite de tamanho por publicação definido pelo serviço; se o arquivo passar, a CLI avisa antes de enviar e explica o que fazer.
+publish — publica um arquivo HTML. Por padrão, todo mundo com e-mail do domínio da sua empresa consegue abrir; use --to para liberar só para e-mails específicos. Existe um limite de tamanho por publicação definido pelo serviço. Se o arquivo for grande demais, a CLI para antes de enviar e diz o que fazer.
 
-publish — publishes an HTML file. By default, anyone with an email on your company domain can open it; use --to to allow only specific emails. There is a per-publish size limit set by the service; if the file is over it, the CLI warns before sending and explains what to do.
+publish — publishes an HTML file. By default, anyone with an email on your company domain can open it; use --to to allow only specific emails. There is a per-publish size limit set by the service. If the file is too large, the CLI stops before sending and says what to do.
 
 ## Access (V1)
 

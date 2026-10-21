@@ -63,16 +63,14 @@ describe("root package exposes CLI for npm", () => {
     assert.equal(pkg.repository.url, NPM_REPO_URL);
   });
 
-  it("does not export a Cloudflare KV writer from the public package entry", async () => {
+  it("does not ship Cloudflare KV helpers in the public package", async () => {
     const mod = await import(path.join(root, "packages/cli/src/index.js"));
-    assert.equal("kvPut" in mod, false);
-    assert.equal("kvDelete" in mod, false);
+    for (const name of ["kvPut", "kvDelete", "kvGet", "kvList", "verifyToken"]) {
+      assert.equal(name in mod, false, `public entry must not export ${name}`);
+    }
     const indexSrc = fs.readFileSync(path.join(root, "packages/cli/src/index.js"), "utf8");
-    assert.doesNotMatch(indexSrc, /\bkvPut\b/);
-    assert.doesNotMatch(indexSrc, /\bkvDelete\b/);
-    const cfSrc = fs.readFileSync(path.join(root, "packages/cli/src/cf-api.js"), "utf8");
-    assert.doesNotMatch(cfSrc, /export async function kvPut/);
-    assert.doesNotMatch(cfSrc, /export async function kvDelete/);
+    assert.doesNotMatch(indexSrc, /\bkv(Put|Delete|Get|List)\b/);
+    assert.equal(fs.existsSync(path.join(root, "packages/cli/src/cf-api.js")), false);
   });
 
   it("resolved bin prints our CLI help (not artelydev/secure-publish)", () => {
@@ -84,6 +82,8 @@ describe("root package exposes CLI for npm", () => {
     assert.doesNotMatch(r.stdout, /dangerousRegistries|Guardian/i);
     assert.doesNotMatch(r.stdout, /\bsp\b/);
     assert.doesNotMatch(r.stdout, /Usage:\s*secure-publish\b/);
+    assert.doesNotMatch(r.stdout, /CLOUDFLARE_API_TOKEN|CLOUDFLARE_ACCOUNT_ID|kvNamespaceId/);
+    assert.doesNotMatch(r.stdout, /api\.cloudflare\.com/);
   });
 });
 
@@ -135,7 +135,7 @@ describe("skill documents npm package invocations only", () => {
 
   it("describes publish size in plain language without endpoints, env vars, or byte math", () => {
     assert.match(skill, /limite de tamanho por publicação definido pelo serviço/);
-    assert.match(skill, /CLI avisa antes de enviar/);
+    assert.match(skill, /CLI para antes de enviar e diz o que fazer/);
     assert.doesNotMatch(skill, /SECUREPUBLISH_MAX_UPLOAD_BYTES/);
     assert.doesNotMatch(skill, /3145728/);
     assert.doesNotMatch(skill, /GET \/api\/limits/);
@@ -153,8 +153,12 @@ describe("skill documents npm package invocations only", () => {
     assert.match(top, /https:\/\/www\.npmjs\.com\/package\/@securepublish\/cli/);
     assert.match(top, /unpkg\.com\/browse\/@securepublish\/cli@1\.0\.4/);
     assert.match(top, /Sobre o login por código/);
-    assert.match(top, /app\.securepublish\.work/);
+    assert.match(
+      top,
+      /O código aparece no seu próprio terminal; digite só em app\.securepublish\.work\/device, depois de entrar com sua conta/
+    );
     assert.match(top, /Nunca pedimos esse código por e-mail, chat ou telefone/);
+    assert.match(top, /Se alguém te mandar um código, não digite/);
     assert.match(top, /https:\/\/securepublish\.work\/security/);
     assert.match(top, /https:\/\/securepublish\.work\/pt\/seguranca/);
     assert.doesNotMatch(top, /100% seguro/);
@@ -240,7 +244,7 @@ describe("README documents npm package invocations", () => {
       /publishes an HTML file\. By default, anyone with an email on your company domain can open it/
     );
     assert.match(readme, /per-publish size limit set by the service/);
-    assert.match(readme, /warns before sending and explains what to do/);
+    assert.match(readme, /If the file is too large, the CLI stops before sending and says what to do/);
     assert.doesNotMatch(readme, /SECUREPUBLISH_MAX_UPLOAD_BYTES/);
     assert.doesNotMatch(readme, /3145728/);
     assert.doesNotMatch(readme, /GET \/api\/limits/);
@@ -257,8 +261,12 @@ describe("README documents npm package invocations", () => {
     assert.match(top, /https:\/\/www\.npmjs\.com\/package\/@securepublish\/cli/);
     assert.match(top, /unpkg\.com\/browse\/@securepublish\/cli@1\.0\.4/);
     assert.match(top, /About code sign-in/);
-    assert.match(top, /app\.securepublish\.work/);
+    assert.match(
+      top,
+      /The code appears in your own terminal; type it only at app\.securepublish\.work\/device, after you sign in with your account/
+    );
     assert.match(top, /We never ask for this code by email, chat, or phone/);
+    assert.match(top, /If someone sends you a code, do not type it/);
     assert.match(top, /https:\/\/securepublish\.work\/security/);
     assert.match(top, /https:\/\/securepublish\.work\/pt\/seguranca/);
     assert.doesNotMatch(readme, /100% safe|100% seguro/);

@@ -1,6 +1,10 @@
 /** GET /api/limits is best-effort; a miss must not block the upload. */
 export const LIMITS_FETCH_TIMEOUT_MS = 3000;
 export const SERVER_TEXT_MAX_CHARS = 500;
+export const SIZE_REFUSED_MESSAGE = {
+  pt: "O serviço recusou o envio porque o arquivo passa do limite de tamanho.",
+  en: "The service refused the upload because the file is over the size limit.",
+};
 
 export function parsePositiveInt(raw) {
   if (raw == null || raw === "") return null;
@@ -29,18 +33,23 @@ export function sanitizeServerText(text, maxLen = SERVER_TEXT_MAX_CHARS) {
   return s;
 }
 
-/** Prefer JSON `message`; otherwise the raw 413 body. Always sanitize. */
-export function serverSizeErrorMessage(rawText) {
+/**
+ * Prefer a usable JSON `message`. If missing/empty/non-JSON (including HTML),
+ * print one short generic line — never dump the raw body.
+ */
+export function serverSizeErrorMessage(rawText, lang = "pt") {
+  const fallback = lang === "en" ? SIZE_REFUSED_MESSAGE.en : SIZE_REFUSED_MESSAGE.pt;
   const raw = rawText == null ? "" : String(rawText);
   try {
     const data = JSON.parse(raw);
     if (data && typeof data === "object" && typeof data.message === "string") {
-      return sanitizeServerText(data.message);
+      const msg = sanitizeServerText(data.message);
+      if (msg.trim()) return msg;
     }
   } catch {
     /* not JSON */
   }
-  return sanitizeServerText(raw);
+  return fallback;
 }
 
 /**

@@ -13,9 +13,9 @@
 - npm: https://www.npmjs.com/package/@securepublish/cli
 - Source for this version: https://unpkg.com/browse/@securepublish/cli@1.0.4/ · https://cdn.jsdelivr.net/npm/@securepublish/cli@1.0.4/
 
-**About code sign-in.** The CLI shows a code and opens app.securepublish.work. Check the address, type the code there, and only approve if you started the login in the terminal. We never ask for this code by email, chat, or phone.
+**About code sign-in.** The code appears in your own terminal; type it only at app.securepublish.work/device, after you sign in with your account. We never ask for this code by email, chat, or phone. If someone sends you a code, do not type it.
 
-**Sobre o login por código.** A CLI mostra um código e abre app.securepublish.work. Confira o endereço, digite o código lá e só aprove se foi você quem começou o login no terminal. Nunca pedimos esse código por e-mail, chat ou telefone.
+**Sobre o login por código.** O código aparece no seu próprio terminal; digite só em app.securepublish.work/device, depois de entrar com sua conta. Nunca pedimos esse código por e-mail, chat ou telefone. Se alguém te mandar um código, não digite.
 
 Security & data: https://securepublish.work/security · PT: https://securepublish.work/pt/seguranca
 
@@ -59,9 +59,9 @@ Agents: run `login`, show the URL and `user_code` in your own message, then run 
 - **login** — request a one-time code, print the URL + code, flush, and exit. Then the user enters the code in the browser.
 - **login --finish** — poll until the browser sign-in is approved and store the session.
 - **login --wait** — old blocking behavior (print the code and wait in the same process).
-- **publish** — publishes an HTML file. By default, anyone with an email on your company domain can open it; use --to to allow only specific emails. There is a per-publish size limit set by the service; if the file is over it, the CLI warns before sending and explains what to do.
+- **publish** — publishes an HTML file. By default, anyone with an email on your company domain can open it; use --to to allow only specific emails. There is a per-publish size limit set by the service. If the file is too large, the CLI stops before sending and says what to do.
 - **logout** — disconnect this machine.
-- **revoke** — take a published link down. Accepts the panel id or the full URL. Uses the signed-in account (not Cloudflare credentials). Only the person who published it or the company account owner can remove it. An unknown or already-deleted id is treated as already removed.
+- **revoke** — take a published link down. Accepts the panel id or the full URL. Uses the signed-in account. Only the person who published it or the company account owner can remove it. An unknown or already-deleted id is treated as already removed.
 - **list** / **rename** / **doctor** — list published panels, change the link name, or check whether this machine is signed in.
 
 Company-wide means the same email domain as the signed-in account. It is not Google Workspace, Microsoft Entra, or GitHub Org membership.

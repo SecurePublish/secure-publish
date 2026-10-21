@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import {
   LIMITS_FETCH_TIMEOUT_MS,
   SERVER_TEXT_MAX_CHARS,
+  SIZE_REFUSED_MESSAGE,
   fetchUploadLimit,
   isOverUploadLimit,
   sanitizeServerText,
@@ -92,22 +93,42 @@ describe("serverSizeErrorMessage", () => {
     );
   });
 
-  it("prints raw response text when the 413 body is not JSON", () => {
-    assert.equal(serverSizeErrorMessage("Payload Too Large"), "Payload Too Large");
+  it("uses a short generic line when the 413 has no usable JSON message", () => {
+    assert.equal(SIZE_REFUSED_MESSAGE.pt, "O serviço recusou o envio porque o arquivo passa do limite de tamanho.");
+    assert.equal(
+      SIZE_REFUSED_MESSAGE.en,
+      "The service refused the upload because the file is over the size limit."
+    );
+    assert.equal(serverSizeErrorMessage("Payload Too Large"), SIZE_REFUSED_MESSAGE.pt);
+    assert.equal(serverSizeErrorMessage("Payload Too Large", "en"), SIZE_REFUSED_MESSAGE.en);
+    assert.equal(
+      serverSizeErrorMessage(JSON.stringify({ error: "payload_too_large" })),
+      SIZE_REFUSED_MESSAGE.pt
+    );
+    assert.equal(
+      serverSizeErrorMessage(JSON.stringify({ message: "" })),
+      SIZE_REFUSED_MESSAGE.pt
+    );
+    assert.equal(
+      serverSizeErrorMessage(JSON.stringify({ message: "   " })),
+      SIZE_REFUSED_MESSAGE.pt
+    );
   });
 
-  it("prints raw JSON when the object has no message string", () => {
-    const raw = JSON.stringify({ error: "payload_too_large" });
-    assert.equal(serverSizeErrorMessage(raw), raw);
+  it("never dumps HTML from a 413 body", () => {
+    const html = "<!DOCTYPE html><html><body>" + "x".repeat(600) + "</body></html>";
+    const out = serverSizeErrorMessage(html);
+    assert.equal(out, SIZE_REFUSED_MESSAGE.pt);
+    assert.doesNotMatch(out, /<!DOCTYPE|<html|<body/i);
+    assert.ok(out.length < 200);
   });
 
-  it("sanitizes JSON message and raw text", () => {
+  it("sanitizes a usable JSON message and does not fall back", () => {
     const injected = "x\x1b[31mY\x1b[0m" + "Z".repeat(600);
     const fromJson = serverSizeErrorMessage(JSON.stringify({ message: injected }));
     assert.equal(fromJson.includes("\x1b"), false);
     assert.equal(fromJson.length, 500);
-    const fromRaw = serverSizeErrorMessage("\x1b[0m" + "Q".repeat(10));
-    assert.equal(fromRaw, "Q".repeat(10));
+    assert.match(fromJson, /^xY/);
   });
 });
 

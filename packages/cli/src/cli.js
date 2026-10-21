@@ -4,9 +4,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import http from "node:http";
 import { spawn } from "node:child_process";
-import { loadConfig, configHints } from "./config.js";
+import { loadConfig } from "./config.js";
 import { loadRegistry, upsertPanel, removePanel } from "./registry.js";
-import { kvList, verifyToken } from "./cf-api.js";
 import { mockPut, mockGet, mockDelete, mockList } from "./mock-store.js";
 import {
   parseToFlag,
@@ -70,13 +69,10 @@ const HELP = `
 ${CLI} — publish AI HTML dashboards behind company SSO
 
 Auth model:
-  The URL path is the panel id (KV lookup only) — NOT a credential.
-  Viewers must sign in (Cloudflare Access or Worker OAuth), then pass
-  the panel ACL:
-    default (no --to)  company-wide = same email *domain* as the tenant
-                       (OAUTH_ALLOWED_DOMAINS / companyDomains).
-                       NOT Workspace/Entra/GitHub Org membership (later).
-    --to a@x,b@y       explicit email allowlist (still requires SSO)
+  The URL path is the panel id — NOT a credential.
+  Viewers must sign in, then pass the panel ACL:
+    default (no --to)  company-wide = same email *domain* as the account
+    --to a@x,b@y       explicit email allowlist (still requires sign-in)
 
 Usage:
   ${CLI} login
@@ -86,14 +82,13 @@ Usage:
   ${CLI} rename <id-or-url> --name <text>
   ${CLI} rename <id-or-url> --no-name
   ${CLI} logout
-  ${CLI} list [--remote]
+  ${CLI} list
   ${CLI} revoke <id-or-url>
   ${CLI} doctor
   ${CLI} mock-serve [--port 8787]
   ${CLI} help
 
 Run \`login\` to print the URL and code (it flushes and exits at once), enter the code in the browser, then \`login --finish\`. Publishing and revoke use that account. \`login --wait\` keeps the old blocking flow.
-Do not set CLOUDFLARE_API_TOKEN for publish or revoke. Those commands use the signed-in account so the service can enforce its size limit.
 Only the person who published a link or the company account owner can revoke it.
 
 Optional:
@@ -145,15 +140,6 @@ function parseArgs(argv) {
     }
   }
   return args;
-}
-
-function requireCf(cfg) {
-  const missing = configHints(cfg);
-  if (missing.length) {
-    throw new Error(
-      `Missing config: ${missing.join(", ")}\nRun: ${CLI} doctor`
-    );
-  }
 }
 
 function publicUrl(cfg, key) {
@@ -209,14 +195,6 @@ function apiBaseOf(cfg) {
   return String(
     process.env.SECURE_PUBLISH_API_BASE || cfg?.apiBase || "https://app.securepublish.work"
   ).replace(/\/$/, "");
-}
-
-function operatorMode(flags) {
-  return Boolean(
-    flags?.operator ||
-      process.env.SECURE_PUBLISH_OPERATOR === "1" ||
-      process.env.SECURE_PUBLISH_OPERATOR === "true"
-  );
 }
 
 /** Local publish credential. Mode 0600. Never log the secret. */
@@ -501,7 +479,7 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
   }
   const host = data.host || session.host || "";
   if (res.status === 413) {
-    throw new Error(serverSizeErrorMessage(raw));
+    throw new Error(serverSizeErrorMessage(raw, lang));
   }
   if (!res.ok) {
     if (res.status === 401) clearPublishSession();
@@ -652,21 +630,9 @@ async function cmdList(flags, cfg) {
     }
   }
 
-  if (flags.remote) {
-    if (cfg.mock || flags.mock) {
-      console.log("\nMock KV keys:");
-      const keys = mockList();
-      if (!keys.length) console.log("  (empty)");
-      else for (const k of keys) console.log(`  ${k}`);
-      return;
-    }
-    requireCf(cfg);
-    console.log("\nRemote KV keys:");
-    const keys = await kvList({
-      accountId: cfg.accountId,
-      namespaceId: cfg.kvNamespaceId,
-      token: cfg.apiToken,
-    });
+  if (flags.remote && (cfg.mock || flags.mock)) {
+    console.log("\nMock store keys:");
+    const keys = mockList();
     if (!keys.length) console.log("  (empty)");
     else for (const k of keys) console.log(`  ${k}`);
   }
@@ -785,100 +751,24 @@ async function cmdRevoke(ref, cfg, flags) {
 }
 
 async function cmdDoctor(cfg) {
-  if (!cfg.mock && !operatorMode({})) {
-    const lines = [`${CLI} doctor`, "─────────────────────"];
-    const session = readPublishSession();
-    if (session) {
-      lines.push(`Status: conta ligada${session.email ? " (" + session.email + ")" : ""}.`);
-      if (session.host) lines.push(`host: ${session.host}`);
-      lines.push(`Next: ${CLI} publish <file.html>`);
-    } else {
-      lines.push("Status: conta não ligada nesta máquina.");
-      lines.push(`Next: ${CLI} login`);
-    }
-    console.log(lines.join("\n"));
-    return session ? 0 : 1;
-  }
-  const lines = [];
-  lines.push(`${CLI} doctor`);
-  lines.push("─────────────────────");
-  lines.push(`Node:                 ${process.version}`);
-  lines.push(`mock mode:            ${cfg.mock ? "ON" : "off"}`);
-  lines.push(
-    `CLOUDFLARE_API_TOKEN: ${cfg.apiToken ? "set" : "not set"}`
-  );
-  lines.push(`CLOUDFLARE_ACCOUNT_ID: ${cfg.accountId || "MISSING"}`);
-  lines.push(`kvNamespaceId:        ${cfg.kvNamespaceId || "MISSING"}`);
-  lines.push(
-    `baseUrl:              ${
-      cfg.baseUrl || "(not set — will use workers.dev pattern)"
-    }`
-  );
-  lines.push(`workerName:           ${cfg.workerName}`);
-  lines.push(
-    `companyDomains:       ${
-      cfg.companyDomains.length
-        ? cfg.companyDomains.join(", ")
-        : "(none — set SECURE_PUBLISH_COMPANY_DOMAINS / OAUTH_ALLOWED_DOMAINS)"
-    }`
-  );
-  lines.push(`home config:          ${cfg.homeConfigPath}`);
-  lines.push(`project config:       ${cfg.projectConfigPath}`);
-
-  const missing = configHints(cfg);
+  const lines = [`${CLI} doctor`, "─────────────────────"];
   if (cfg.mock) {
-    lines.push("");
-    lines.push("Status: mock mode — Cloudflare not required.");
-    lines.push("Next: npm run e2e:mock  OR  publish … --mock && mock-serve");
-  } else if (missing.length) {
-    lines.push("");
-    lines.push(`Status: incomplete — missing ${missing.join(", ")}`);
-    lines.push("");
-    lines.push("Next steps (no secrets in git / chat):");
-    if (!cfg.apiToken) {
-      lines.push("  1. Ask your administrator for CLOUDFLARE_API_TOKEN (Workers KV Edit).");
-      lines.push("     export CLOUDFLARE_API_TOKEN=…   # never commit");
-    }
-    if (!cfg.accountId) {
-      lines.push("  2. export CLOUDFLARE_ACCOUNT_ID=…  (dash.cloudflare.com)");
-    }
-    if (!cfg.kvNamespaceId) {
-      lines.push("  3. export SECURE_PUBLISH_KV_NAMESPACE_ID=…  (or wrangler kv namespace list)");
-    }
-    lines.push("  Or copy .secure-publish.json.example → .secure-publish.json / ~/.secure-publish/config.json");
-    lines.push("  Without a token yet: SECURE_PUBLISH_MOCK=1 for local E2E.");
-    if (!cfg.baseUrl) {
-      lines.push("");
-      lines.push("  Set BASE_URL:");
-      lines.push("    export SECURE_PUBLISH_BASE_URL=https://demo.securepublish.work");
-      lines.push("  Or tenant: https://{slug}.securepublish.work");
-    }
-  } else {
-    lines.push("");
-    lines.push("Status: config looks complete. Verifying token…");
-    try {
-      const v = await verifyToken(cfg.apiToken);
-      lines.push(`Token verify: OK (${v.result?.status || "active"})`);
-      lines.push("");
-      lines.push(`Next: ${CLI} publish examples/panel-vendas.html --title \"…\"`);
-      if (!cfg.baseUrl) {
-        lines.push("  Tip: set SECURE_PUBLISH_BASE_URL=https://demo.securepublish.work");
-      }
-    } catch (err) {
-      lines.push(`Token verify: FAILED — ${err.message}`);
-      lines.push("Next: ask your administrator to rotate/reissue CLOUDFLARE_API_TOKEN (KV Edit scope).");
-    }
+    lines.push("Status: mock mode.");
+    lines.push(`Next: ${CLI} publish <file.html> --mock`);
+    console.log(lines.join("\n"));
+    return 0;
   }
-
-  lines.push("");
-  lines.push("ACL reminder (V1 Lock A):");
-  lines.push("  Default publish = company email *domain* after SSO.");
-  lines.push("  --to = explicit email allowlist.");
-  lines.push("  Does NOT check Workspace / Entra / GitHub Org membership.");
-  lines.push("  Panel URLs are NOT credentials — SSO session required.");
-
+  const session = readPublishSession();
+  if (session) {
+    lines.push(`Status: conta ligada${session.email ? " (" + session.email + ")" : ""}.`);
+    if (session.host) lines.push(`host: ${session.host}`);
+    lines.push(`Next: ${CLI} publish <file.html>`);
+  } else {
+    lines.push("Status: conta não ligada nesta máquina.");
+    lines.push(`Next: ${CLI} login`);
+  }
   console.log(lines.join("\n"));
-  return cfg.mock || missing.length === 0 ? 0 : 1;
+  return session ? 0 : 1;
 }
 
 /**

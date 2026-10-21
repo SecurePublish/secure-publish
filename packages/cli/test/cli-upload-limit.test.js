@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "../src/cli.js";
+import { SIZE_REFUSED_MESSAGE } from "../src/upload-limit.js";
 
 function token() {
   return "ab".repeat(32);
@@ -321,28 +322,41 @@ describe("CLI publish upload size limit", () => {
     assert.equal(post.length, 1);
   });
 
-  it("prints the raw response text when a 413 has no JSON", async () => {
+  it("uses a generic size line when a 413 has no JSON, empty message, or HTML", async () => {
     const htmlPath = path.join(tmp, "dash.html");
     fs.writeFileSync(htmlPath, "<html>small</html>\n");
-    globalThis.fetch = async (url, init) => {
-      calls.push({ url: String(url), init });
-      if (String(url).endsWith("/api/limits")) {
-        throw new Error("limits down");
+
+    const publish413 = async (body, contentType, extraFlags = []) => {
+      globalThis.fetch = async (url, init) => {
+        if (String(url).endsWith("/api/limits")) throw new Error("limits down");
+        if (init?.method === "POST") {
+          return new Response(body, {
+            status: 413,
+            headers: { "content-type": contentType },
+          });
+        }
+        return new Response("unexpected", { status: 500 });
+      };
+      try {
+        await main(["publish", htmlPath, "--title", "Painel", ...extraFlags]);
+        throw new Error("expected publish to fail");
+      } catch (e) {
+        return e.message;
       }
-      if (init?.method === "POST") {
-        return new Response("Payload Too Large", {
-          status: 413,
-          headers: { "content-type": "text/plain" },
-        });
-      }
-      return new Response("unexpected", { status: 500 });
     };
-    await assert.rejects(
-      () => main(["publish", htmlPath, "--title", "Painel"]),
-      (e) => {
-        assert.equal(e.message, "Payload Too Large");
-        return true;
-      }
+
+    assert.equal(await publish413("Payload Too Large", "text/plain"), SIZE_REFUSED_MESSAGE.pt);
+    assert.equal(
+      await publish413(JSON.stringify({ message: "" }), "application/json"),
+      SIZE_REFUSED_MESSAGE.pt
+    );
+    const htmlDump = "<!DOCTYPE html><html><body><h1>413</h1>" + "y".repeat(400) + "</body></html>";
+    const fromHtml = await publish413(htmlDump, "text/html");
+    assert.equal(fromHtml, SIZE_REFUSED_MESSAGE.pt);
+    assert.doesNotMatch(fromHtml, /<!DOCTYPE|<html|<h1/i);
+    assert.equal(
+      await publish413("Payload Too Large", "text/plain", ["--lang", "en"]),
+      SIZE_REFUSED_MESSAGE.en
     );
   });
 
