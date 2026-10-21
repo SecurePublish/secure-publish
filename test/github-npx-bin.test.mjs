@@ -1,5 +1,5 @@
 /**
- * Ensures agents can run OUR CLI via `npx --yes @securepublish/cli@1.0.3`
+ * Ensures agents can run OUR CLI via `npx --yes @securepublish/cli@1.0.4`
  * (not the unrelated public npm package named secure-publish).
  * The binary exposed by that install is `securepublish-cli` only.
  * npx does not leave that bin on PATH — docs must use the full npx form.
@@ -14,7 +14,7 @@ import { describe, it } from "node:test";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BIN_NAME = "securepublish-cli";
 const PKG_NAME = "@securepublish/cli";
-const PKG_VERSION = "1.0.3";
+const PKG_VERSION = "1.0.4";
 const BIN_REL = `packages/cli/bin/${BIN_NAME}.cjs`;
 const OUR_HELP_MARKER = `${BIN_NAME} — publish AI HTML dashboards behind company SSO`;
 const NPM_NPX = `npx --yes ${PKG_NAME}@${PKG_VERSION}`;
@@ -81,7 +81,7 @@ describe("skill documents npm package invocations only", () => {
     "utf8"
   );
 
-  it("documents full npx @securepublish/cli@1.0.3 form for login and publish", () => {
+  it("documents full npx @securepublish/cli@1.0.4 form for login and publish", () => {
     assert.match(skill, new RegExp(`${NPM_NPX_RE} login`));
     assert.match(skill, new RegExp(`${NPM_NPX_RE} login --finish`));
     assert.match(skill, new RegExp(`${NPM_NPX_RE} publish`));
@@ -121,15 +121,34 @@ describe("skill documents npm package invocations only", () => {
     );
   });
 
-  it("documents the publish upload size limit and SECUREPUBLISH_MAX_UPLOAD_BYTES", () => {
-    assert.match(skill, /SECUREPUBLISH_MAX_UPLOAD_BYTES/);
-    assert.match(skill, /3145728/);
-    assert.match(skill, /GET \/api\/limits/);
-    assert.match(skill, /too large to publish/i);
-    assert.match(
-      skill,
-      /Do not use the generic line below for this case/
-    );
+  it("describes publish size in plain language without endpoints, env vars, or byte math", () => {
+    assert.match(skill, /limite de tamanho por publicação definido pelo serviço/);
+    assert.match(skill, /CLI avisa antes de enviar/);
+    assert.doesNotMatch(skill, /SECUREPUBLISH_MAX_UPLOAD_BYTES/);
+    assert.doesNotMatch(skill, /3145728/);
+    assert.doesNotMatch(skill, /GET \/api\/limits/);
+    assert.doesNotMatch(skill, /3 \* 1024 \* 1024/);
+  });
+
+  it("opens with a trust block (operator, data, install links, code login, security page)", () => {
+    const afterFront = skill.replace(/^---[\s\S]*?---\s*/, "");
+    const top = afterFront.slice(0, 2500);
+    assert.match(top, /Quem opera e para onde vão os dados/);
+    assert.match(top, /O Secure Publish é operado por SecurePublish/);
+    assert.match(top, /Antes de instalar/);
+    assert.match(top, /https:\/\/securepublish\.work\/skill\.md/);
+    assert.match(top, /https:\/\/securepublish\.work\/cli/);
+    assert.match(top, /https:\/\/www\.npmjs\.com\/package\/@securepublish\/cli/);
+    assert.match(top, /unpkg\.com\/browse\/@securepublish\/cli@1\.0\.4/);
+    assert.match(top, /Sobre o login por código/);
+    assert.match(top, /app\.securepublish\.work/);
+    assert.match(top, /Nunca pedimos esse código por e-mail, chat ou telefone/);
+    assert.match(top, /https:\/\/securepublish\.work\/security/);
+    assert.match(top, /https:\/\/securepublish\.work\/pt\/seguranca/);
+    assert.doesNotMatch(top, /100% seguro/);
+    assert.doesNotMatch(top, /\bGoogle\b|\bMicrosoft\b|Cloudflare Access|Entra/);
+    assert.doesNotMatch(top, /backup/i);
+    assert.doesNotMatch(top, /[A-Za-z0-9._%+-]+@securepublish\.work/);
   });
 
   it("keeps user-facing Portuguese lines unchanged", () => {
@@ -167,7 +186,7 @@ describe("skill documents npm package invocations only", () => {
 describe("README documents npm package invocations", () => {
   const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 
-  it("uses full npx @securepublish/cli@1.0.3 form for runnable CLI examples", () => {
+  it("uses full npx @securepublish/cli@1.0.4 form for runnable CLI examples", () => {
     assert.match(readme, new RegExp(`${NPM_NPX_RE} login`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} login --finish`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} publish`));
@@ -203,11 +222,35 @@ describe("README documents npm package invocations", () => {
     }
   });
 
-  it("documents the publish upload size limit and SECUREPUBLISH_MAX_UPLOAD_BYTES", () => {
-    assert.match(readme, /SECUREPUBLISH_MAX_UPLOAD_BYTES/);
-    assert.match(readme, /3145728/);
-    assert.match(readme, /GET \/api\/limits/);
-    assert.match(readme, /3 MB/);
+  it("describes publish size in plain language without endpoints, env vars, or byte math", () => {
+    assert.match(
+      readme,
+      /publishes an HTML file\. By default, anyone with an email on your company domain can open it/
+    );
+    assert.match(readme, /per-publish size limit set by the service/);
+    assert.match(readme, /warns before sending and explains what to do/);
+    assert.doesNotMatch(readme, /SECUREPUBLISH_MAX_UPLOAD_BYTES/);
+    assert.doesNotMatch(readme, /3145728/);
+    assert.doesNotMatch(readme, /GET \/api\/limits/);
+    assert.doesNotMatch(readme, /3 \* 1024 \* 1024/);
+  });
+
+  it("opens with a trust block (operator, data, install links, code login, security page)", () => {
+    const top = readme.slice(0, 2800);
+    assert.match(top, /Who operates this and where the data goes/);
+    assert.match(top, /Secure Publish is operated by SecurePublish/);
+    assert.match(top, /Before you install/);
+    assert.match(top, /https:\/\/securepublish\.work\/skill\.md/);
+    assert.match(top, /https:\/\/securepublish\.work\/cli/);
+    assert.match(top, /https:\/\/www\.npmjs\.com\/package\/@securepublish\/cli/);
+    assert.match(top, /unpkg\.com\/browse\/@securepublish\/cli@1\.0\.4/);
+    assert.match(top, /About code sign-in/);
+    assert.match(top, /app\.securepublish\.work/);
+    assert.match(top, /We never ask for this code by email, chat, or phone/);
+    assert.match(top, /https:\/\/securepublish\.work\/security/);
+    assert.match(top, /https:\/\/securepublish\.work\/pt\/seguranca/);
+    assert.doesNotMatch(readme, /100% safe|100% seguro/);
+    assert.doesNotMatch(top, /backup/i);
   });
 
   it("documents Node 22 LTS in Requisitos", () => {
@@ -259,6 +302,14 @@ describe("npm publish workflow uses Trusted Publishing (OIDC)", () => {
     assert.doesNotMatch(workflow, /NPM_TOKEN\s*:/);
     assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN\s*:/);
     assert.match(workflow, /NODE_AUTH_TOKEN/);
+  });
+
+  it("emits SKILL.md with version + sha256 header as a release artifact", () => {
+    assert.match(workflow, /sha256/i);
+    assert.match(workflow, /skills\/secure-publish\/SKILL\.md/);
+    assert.match(workflow, /actions\/upload-artifact@v4/);
+    assert.match(workflow, /skill-md|SKILL\.md/);
+    assert.match(workflow, /require\('\.\/package\.json'\)\.version/);
   });
 });
 

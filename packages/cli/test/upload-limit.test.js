@@ -1,253 +1,186 @@
 /**
- * Upload size limit: env → GET /api/limits → fallback, plus user-facing copy.
+ * Server-owned upload limit: fetch /api/limits, skip legacy shape, sanitize.
  */
-import { describe, it, beforeEach, afterEach } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEFAULT_MAX_UPLOAD_BYTES,
-  formatMb,
-  isNearUploadLimit,
+  LIMITS_FETCH_TIMEOUT_MS,
+  SERVER_TEXT_MAX_CHARS,
+  fetchUploadLimit,
   isOverUploadLimit,
-  isSizeTooLargeResponse,
-  nearLimitWarning,
-  parsePositiveInt,
-  resetUploadLimitCache,
-  resolveMaxUploadBytes,
-  uploadTooLargeMessage,
+  sanitizeServerText,
+  serverSizeErrorMessage,
 } from "../src/upload-limit.js";
 
-describe("DEFAULT_MAX_UPLOAD_BYTES", () => {
-  it("is 3 MiB in bytes (3 * 1024 * 1024)", () => {
-    assert.equal(DEFAULT_MAX_UPLOAD_BYTES, 3 * 1024 * 1024);
-    assert.equal(DEFAULT_MAX_UPLOAD_BYTES, 3145728);
+describe("LIMITS_FETCH_TIMEOUT_MS", () => {
+  it("is 3 seconds", () => {
+    assert.equal(LIMITS_FETCH_TIMEOUT_MS, 3000);
   });
 });
 
-describe("parsePositiveInt", () => {
-  it("accepts a positive integer string", () => {
-    assert.equal(parsePositiveInt("3145728"), 3145728);
-    assert.equal(parsePositiveInt(" 100 "), 100);
-  });
-
-  it("rejects missing, zero, negative, and non-integers", () => {
-    assert.equal(parsePositiveInt(undefined), null);
-    assert.equal(parsePositiveInt(""), null);
-    assert.equal(parsePositiveInt("0"), null);
-    assert.equal(parsePositiveInt("-1"), null);
-    assert.equal(parsePositiveInt("1.5"), null);
-    assert.equal(parsePositiveInt("nope"), null);
+describe("isOverUploadLimit", () => {
+  it("is over only when the request body is strictly larger than maxBytes", () => {
+    assert.equal(isOverUploadLimit(101, 100), true);
+    assert.equal(isOverUploadLimit(100, 100), false);
+    assert.equal(isOverUploadLimit(1, 100), false);
   });
 });
 
-describe("formatMb", () => {
-  it("prints bytes as MB using 1024 * 1024", () => {
-    assert.equal(formatMb(3 * 1024 * 1024), "3.0");
-    assert.equal(formatMb(Math.round(2.6 * 1024 * 1024)), "2.6");
+describe("sanitizeServerText", () => {
+  it("strips ANSI and other control characters", () => {
+    const raw = "hello\x1b[31mRED\x1b[0m\x07\x08world\r\nnext";
+    const out = sanitizeServerText(raw);
+    assert.equal(out.includes("\x1b"), false);
+    assert.equal(out.includes("\x07"), false);
+    assert.equal(out.includes("\x08"), false);
+    assert.equal(out.includes("\r"), false);
+    assert.match(out, /hello/);
+    assert.match(out, /RED/);
+    assert.match(out, /world/);
+    assert.match(out, /next/);
+  });
+
+  it("caps length at ~500 characters", () => {
+    const out = sanitizeServerText("A".repeat(800));
+    assert.equal(out.length, SERVER_TEXT_MAX_CHARS);
+    assert.equal(SERVER_TEXT_MAX_CHARS, 500);
+  });
+
+  it("stringifies non-strings safely", () => {
+    assert.equal(sanitizeServerText(undefined), "");
+    assert.equal(sanitizeServerText(null), "");
   });
 });
 
-describe("over / near / under limit", () => {
-  const limit = 1000;
-
-  it("treats a file over the limit as over, not near", () => {
-    assert.equal(isOverUploadLimit(1001, limit), true);
-    assert.equal(isNearUploadLimit(1001, limit), false);
-  });
-
-  it("treats a file over 90% of the limit as near, not over", () => {
-    assert.equal(isOverUploadLimit(901, limit), false);
-    assert.equal(isNearUploadLimit(901, limit), true);
-    assert.equal(isNearUploadLimit(1000, limit), true);
-  });
-
-  it("treats a file at or under 90% as under the warning", () => {
-    assert.equal(isOverUploadLimit(900, limit), false);
-    assert.equal(isNearUploadLimit(900, limit), false);
-    assert.equal(isOverUploadLimit(1, limit), false);
-  });
-});
-
-describe("uploadTooLargeMessage", () => {
-  it("states the per-publish limit, file size, limit in MB, and practical tips", () => {
-    const msg = uploadTooLargeMessage(Math.round(2.6 * 1024 * 1024), 3 * 1024 * 1024);
-    assert.match(msg, /too large to publish/i);
-    assert.match(msg, /per-publish upload limit/i);
-    assert.match(msg, /2\.6 MB/);
-    assert.match(msg, /3\.0 MB/);
-    assert.match(msg, /Compress/i);
-    assert.match(msg, /fewer images/i);
-    assert.match(msg, /Move large images/i);
-    assert.match(msg, /Split/i);
-  });
-});
-
-describe("nearLimitWarning", () => {
-  it("warns without saying the publish was blocked", () => {
-    const msg = nearLimitWarning(901, 1000);
-    assert.match(msg, /^warn:/);
-    assert.match(msg, /MB/);
-    assert.doesNotMatch(msg, /too large to publish/i);
-  });
-});
-
-describe("isSizeTooLargeResponse", () => {
-  it("maps HTTP 413 as size-too-large", () => {
-    assert.equal(isSizeTooLargeResponse({ status: 413 }, {}), true);
-  });
-
-  it("maps known size-too-large error bodies even without 413", () => {
+describe("serverSizeErrorMessage", () => {
+  it("prints the JSON message field unchanged (aside from sanitizing)", () => {
+    const msg = "Este arquivo passa do limite. Comprima as imagens.";
     assert.equal(
-      isSizeTooLargeResponse({ status: 400 }, { error: "payload_too_large" }),
-      true
-    );
-    assert.equal(
-      isSizeTooLargeResponse({ status: 400 }, { error: "size_too_large" }),
-      true
+      serverSizeErrorMessage(JSON.stringify({ message: msg, error: "payload_too_large" })),
+      msg
     );
   });
 
-  it("does not map unrelated errors", () => {
-    assert.equal(isSizeTooLargeResponse({ status: 401 }, { error: "unauthorized" }), false);
-    assert.equal(isSizeTooLargeResponse({ status: 500 }, { error: "internal" }), false);
-    assert.equal(isSizeTooLargeResponse({ status: 200 }, {}), false);
+  it("prints raw response text when the 413 body is not JSON", () => {
+    assert.equal(serverSizeErrorMessage("Payload Too Large"), "Payload Too Large");
+  });
+
+  it("prints raw JSON when the object has no message string", () => {
+    const raw = JSON.stringify({ error: "payload_too_large" });
+    assert.equal(serverSizeErrorMessage(raw), raw);
+  });
+
+  it("sanitizes JSON message and raw text", () => {
+    const injected = "x\x1b[31mY\x1b[0m" + "Z".repeat(600);
+    const fromJson = serverSizeErrorMessage(JSON.stringify({ message: injected }));
+    assert.equal(fromJson.includes("\x1b"), false);
+    assert.equal(fromJson.length, 500);
+    const fromRaw = serverSizeErrorMessage("\x1b[0m" + "Q".repeat(10));
+    assert.equal(fromRaw, "Q".repeat(10));
   });
 });
 
-describe("resolveMaxUploadBytes", () => {
-  beforeEach(() => {
-    resetUploadLimitCache();
-  });
-
-  afterEach(() => {
-    resetUploadLimitCache();
-  });
-
-  it("uses SECUREPUBLISH_MAX_UPLOAD_BYTES when set and does not fetch", async () => {
-    let fetches = 0;
-    const n = await resolveMaxUploadBytes({
-      apiBase: "https://app.example",
-      env: { SECUREPUBLISH_MAX_UPLOAD_BYTES: "12345" },
-      fetchImpl: async () => {
-        fetches += 1;
-        throw new Error("should not fetch");
+describe("fetchUploadLimit", () => {
+  it("reads upload.maxBytes and upload.message from GET /api/limits", async () => {
+    let url;
+    let init;
+    const limit = await fetchUploadLimit({
+      apiBase: "https://app.example/",
+      lang: "en",
+      fetchImpl: async (u, opts) => {
+        url = String(u);
+        init = opts;
+        return new Response(
+          JSON.stringify({
+            upload: { maxBytes: 1500000, message: "too big — compress images" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
       },
     });
-    assert.equal(n, 12345);
-    assert.equal(fetches, 0);
+    assert.equal(url, "https://app.example/api/limits");
+    assert.equal(init.method, "GET");
+    assert.equal(init.headers.accept, "application/json");
+    assert.equal(init.headers["accept-language"], "en");
+    assert.equal(limit.maxBytes, 1500000);
+    assert.equal(limit.message, "too big — compress images");
   });
 
-  it("ignores an invalid env var and falls through", async () => {
-    const n = await resolveMaxUploadBytes({
+  it("sends Accept-Language from --lang (default pt)", async () => {
+    let init;
+    await fetchUploadLimit({
       apiBase: "https://app.example",
-      env: { SECUREPUBLISH_MAX_UPLOAD_BYTES: "nope" },
-      fetchImpl: async () =>
-        new Response(JSON.stringify({ maxUploadBytes: 999 }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-    });
-    assert.equal(n, 999);
-  });
-
-  it("uses GET /api/limits maxUploadBytes when the env var is unset", async () => {
-    let url;
-    const n = await resolveMaxUploadBytes({
-      apiBase: "https://app.example/",
-      env: {},
-      fetchImpl: async (u) => {
-        url = String(u);
-        return new Response(JSON.stringify({ maxUploadBytes: 1500000 }), {
+      fetchImpl: async (_u, opts) => {
+        init = opts;
+        return new Response(JSON.stringify({ upload: { maxBytes: 1, message: "x" } }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
       },
     });
-    assert.equal(url, "https://app.example/api/limits");
-    assert.equal(n, 1500000);
+    assert.equal(init.headers["accept-language"], "pt");
   });
 
-  it("falls back to 3145728 when /api/limits is missing (404)", async () => {
-    const n = await resolveMaxUploadBytes({
+  it("skips pre-check when the response is the legacy {maxUploadBytes} shape", async () => {
+    const limit = await fetchUploadLimit({
       apiBase: "https://app.example",
-      env: {},
-      fetchImpl: async () => new Response("nope", { status: 404 }),
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ maxUploadBytes: 3145728 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
     });
-    assert.equal(n, DEFAULT_MAX_UPLOAD_BYTES);
+    assert.equal(limit, null);
   });
 
-  it("falls back to 3145728 when /api/limits fails or returns invalid JSON", async () => {
-    const failed = await resolveMaxUploadBytes({
+  it("returns null when /api/limits fails, 404s, or returns invalid JSON", async () => {
+    const failed = await fetchUploadLimit({
       apiBase: "https://app.example",
-      env: {},
       fetchImpl: async () => {
         throw new Error("ECONNRESET");
       },
     });
-    assert.equal(failed, DEFAULT_MAX_UPLOAD_BYTES);
+    assert.equal(failed, null);
 
-    resetUploadLimitCache();
-    const badJson = await resolveMaxUploadBytes({
+    const missing = await fetchUploadLimit({
       apiBase: "https://app.example",
-      env: {},
+      fetchImpl: async () => new Response("nope", { status: 404 }),
+    });
+    assert.equal(missing, null);
+
+    const badJson = await fetchUploadLimit({
+      apiBase: "https://app.example",
       fetchImpl: async () =>
         new Response("not-json", {
           status: 200,
           headers: { "content-type": "application/json" },
         }),
     });
-    assert.equal(badJson, DEFAULT_MAX_UPLOAD_BYTES);
+    assert.equal(badJson, null);
 
-    resetUploadLimitCache();
-    const badValue = await resolveMaxUploadBytes({
+    const badValue = await fetchUploadLimit({
       apiBase: "https://app.example",
-      env: {},
       fetchImpl: async () =>
-        new Response(JSON.stringify({ maxUploadBytes: 0 }), {
+        new Response(JSON.stringify({ upload: { maxBytes: 0, message: "x" } }), {
           status: 200,
           headers: { "content-type": "application/json" },
         }),
     });
-    assert.equal(badValue, DEFAULT_MAX_UPLOAD_BYTES);
+    assert.equal(badValue, null);
   });
 
-  it("falls back to 3145728 when there is no apiBase (no hard dependency)", async () => {
-    const n = await resolveMaxUploadBytes({
-      env: {},
+  it("returns null when there is no apiBase", async () => {
+    const n = await fetchUploadLimit({
       fetchImpl: async () => {
         throw new Error("should not fetch");
       },
     });
-    assert.equal(n, DEFAULT_MAX_UPLOAD_BYTES);
+    assert.equal(n, null);
   });
 
-  it("caches GET /api/limits for the rest of the run", async () => {
-    let fetches = 0;
-    const fetchImpl = async () => {
-      fetches += 1;
-      return new Response(JSON.stringify({ maxUploadBytes: 42 }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    };
-    const a = await resolveMaxUploadBytes({
+  it("aborts a slow /api/limits request and returns null", async () => {
+    const n = await fetchUploadLimit({
       apiBase: "https://app.example",
-      env: {},
-      fetchImpl,
-    });
-    const b = await resolveMaxUploadBytes({
-      apiBase: "https://app.example",
-      env: {},
-      fetchImpl,
-    });
-    assert.equal(a, 42);
-    assert.equal(b, 42);
-    assert.equal(fetches, 1);
-  });
-
-  it("aborts a slow /api/limits request and falls back", async () => {
-    const n = await resolveMaxUploadBytes({
-      apiBase: "https://app.example",
-      env: {},
       timeoutMs: 20,
       fetchImpl: (_url, init) =>
         new Promise((_, reject) => {
@@ -258,6 +191,6 @@ describe("resolveMaxUploadBytes", () => {
           });
         }),
     });
-    assert.equal(n, DEFAULT_MAX_UPLOAD_BYTES);
+    assert.equal(n, null);
   });
 });

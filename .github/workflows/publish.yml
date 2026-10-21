@@ -53,6 +53,28 @@ jobs:
       - run: npm ci
       - run: npm test
 
+      - name: Build SKILL.md release artifact
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          SRC="skills/secure-publish/SKILL.md"
+          mkdir -p dist
+          HASH="$(node -e "const fs=require('fs');const c=require('crypto');process.stdout.write(c.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'))" "$SRC")"
+          {
+            echo "version: ${VERSION}"
+            echo "sha256: ${HASH}"
+            echo
+            cat "$SRC"
+          } > dist/SKILL.md
+          echo "Wrote dist/SKILL.md (version ${VERSION}, sha256 ${HASH})"
+
+      - name: Upload SKILL.md artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-md
+          path: dist/SKILL.md
+          if-no-files-found: error
+
       # npm publish uses Trusted Publishing (OIDC). Provenance is attached
       # with --provenance. There is no NODE_AUTH_TOKEN / NPM_TOKEN in this
       # workflow: npm exchanges the GitHub OIDC token for a short-lived

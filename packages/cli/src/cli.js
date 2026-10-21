@@ -6,7 +6,7 @@ import http from "node:http";
 import { spawn } from "node:child_process";
 import { loadConfig, configHints } from "./config.js";
 import { loadRegistry, upsertPanel, removePanel } from "./registry.js";
-import { kvPut, kvGet, kvList, verifyToken } from "./cf-api.js";
+import { kvList, verifyToken } from "./cf-api.js";
 import { mockPut, mockGet, mockDelete, mockList } from "./mock-store.js";
 import {
   parseToFlag,
@@ -17,13 +17,10 @@ import {
   normalizeDomains,
 } from "./acl.js";
 import {
-  isNearUploadLimit,
+  fetchUploadLimit,
   isOverUploadLimit,
-  isSizeTooLargeResponse,
-  nearLimitWarning,
-  parsePositiveInt,
-  resolveMaxUploadBytes,
-  uploadTooLargeMessage,
+  sanitizeServerText,
+  serverSizeErrorMessage,
 } from "./upload-limit.js";
 
 const CLI = "securepublish-cli";
@@ -96,17 +93,12 @@ Usage:
   ${CLI} help
 
 Run \`login\` to print the URL and code (it flushes and exits at once), enter the code in the browser, then \`login --finish\`. Publishing and revoke use that account. \`login --wait\` keeps the old blocking flow.
-Do not set CLOUDFLARE_API_TOKEN for publish or revoke.
+Do not set CLOUDFLARE_API_TOKEN. Publish and revoke go through the signed-in account so the service can enforce its size limit.
 Only the person who published a link or the company account owner can revoke it.
 
-Operator only (\`--operator\` or SECURE_PUBLISH_OPERATOR=1) still writes KV directly:
-  CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
-  SECURE_PUBLISH_KV_NAMESPACE_ID
-  SECURE_PUBLISH_BASE_URL
-  SECURE_PUBLISH_COMPANY_DOMAINS
-  SECURE_PUBLISH_MOCK=1
-  OAUTH_ALLOWED_DOMAINS
+Optional:
   SECURE_PUBLISH_API_BASE   default https://app.securepublish.work
+  SECURE_PUBLISH_MOCK=1     local mock store (no upload to the service)
 
 Config files (optional):
   ./.secure-publish.json
@@ -176,44 +168,6 @@ function publicUrl(cfg, key) {
   return `${base}/${key}`;
 }
 
-
-async function appendKvIndex(cfg, indexKey, panelId) {
-  let list = [];
-  try {
-    const raw = await kvGet({
-      accountId: cfg.accountId,
-      namespaceId: cfg.kvNamespaceId,
-      token: cfg.apiToken,
-      key: indexKey,
-    });
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) list = parsed.map(String);
-    }
-  } catch {
-    /* empty / missing index */
-  }
-  if (!list.includes(panelId)) list.push(panelId);
-  await kvPut({
-    accountId: cfg.accountId,
-    namespaceId: cfg.kvNamespaceId,
-    token: cfg.apiToken,
-    key: indexKey,
-    value: JSON.stringify(list),
-  });
-}
-
-function encodeRecord({ html, title, access, publishedAt, publisherEmail }) {
-  const rec = {
-    v: 1,
-    title,
-    publishedAt,
-    access,
-    html,
-  };
-  if (publisherEmail) rec.publisherEmail = publisherEmail;
-  return JSON.stringify(rec);
-}
 
 function decodeRecord(raw) {
   if (raw == null) return null;
@@ -515,19 +469,20 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
     throw new Error(`Conta não ligada nesta máquina. Rode ${CLI} login.`);
   }
   const apiBase = (session.apiBase || apiBaseOf(cfg)).replace(/\/$/, "");
-  const fileBytes = Buffer.byteLength(html, "utf8");
-  const maxBytes = await resolveMaxUploadBytes({ apiBase });
-  if (isOverUploadLimit(fileBytes, maxBytes)) {
-    throw new Error(uploadTooLargeMessage(fileBytes, maxBytes));
-  }
-  if (isNearUploadLimit(fileBytes, maxBytes)) {
-    console.error(nearLimitWarning(fileBytes, maxBytes));
-  }
   const title =
     flags.title || path.basename(filePath, path.extname(filePath)) || "untitled";
   const body = { html, title };
   if (toEmails.length) body.to = toEmails;
   if (typeof flags.name === "string" && flags.name !== "") body.name = flags.name;
+  const payload = JSON.stringify(body);
+  const lang = cliLang(flags);
+  const limit = await fetchUploadLimit({ apiBase, lang });
+  if (
+    limit &&
+    isOverUploadLimit(Buffer.byteLength(payload, "utf8"), limit.maxBytes)
+  ) {
+    throw new Error(sanitizeServerText(limit.message));
+  }
   const res = await fetch(`${apiBase}/api/panels`, {
     method: "POST",
     headers: {
@@ -535,13 +490,18 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
       "content-type": "application/json",
       authorization: `Bearer ${session.publishToken}`,
     },
-    body: JSON.stringify(body),
+    body: payload,
   });
-  const data = await res.json().catch(() => ({}));
+  const raw = await res.text();
+  let data = {};
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = {};
+  }
   const host = data.host || session.host || "";
-  if (isSizeTooLargeResponse(res, data)) {
-    const serverLimit = parsePositiveInt(data?.maxUploadBytes) ?? maxBytes;
-    throw new Error(uploadTooLargeMessage(fileBytes, serverLimit));
+  if (res.status === 413) {
+    throw new Error(serverSizeErrorMessage(raw));
   }
   if (!res.ok) {
     if (res.status === 401) clearPublishSession();
@@ -553,7 +513,6 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
       `Não consegui publicar agora.${host ? ` A conta está ligada em ${host}.` : ""} Tenta de novo em instantes.`
     );
   }
-  const lang = flags.lang === "en" ? "en" : "pt";
   const entry = {
     key: data.id,
     title: data.title || title,
@@ -591,7 +550,6 @@ async function cmdPublish(fileArg, flags, cfg) {
   if (!html.trim()) throw new Error("HTML file is empty");
 
   const useMock = Boolean(flags.mock || cfg.mock);
-  const useOperator = operatorMode(flags);
   const toEmails = parseToFlag(flags.to);
   if (flags.to !== undefined && flags.to !== true && toEmails.length === 0) {
     throw new Error(
@@ -604,15 +562,8 @@ async function cmdPublish(fileArg, flags, cfg) {
     companyDomains: cfg.companyDomains,
   });
 
-  if (!useMock && !useOperator) {
+  if (!useMock) {
     return publishViaAccount(filePath, html, flags, cfg, toEmails);
-  }
-  if (!useMock) requireCf(cfg);
-
-  if (access.mode === "company" && !access.domains.length && !useMock) {
-    process.stderr.write(
-      "warn: company-wide publish without companyDomains / OAUTH_ALLOWED_DOMAINS — edge will fail closed until domains are set.\n"
-    );
   }
 
   const key = generateKey();
@@ -639,44 +590,23 @@ async function cmdPublish(fileArg, flags, cfg) {
 
   const lang = flags.lang === "en" ? "en" : "pt";
 
-  if (useMock) {
-    process.stderr.write(
-      `Publishing ${path.basename(filePath)} → mock KV key ${key}…\n`
-    );
-    mockPut(key, record);
-    if (publisherEmail) {
-      const pubIdx = `idx:pub:${publisherEmail}`;
-      const prev = mockGet(pubIdx);
-      const list = Array.isArray(prev) ? prev.map(String) : [];
-      if (!list.includes(key)) list.push(key);
-      mockPut(pubIdx, list);
-      const dom = publisherEmail.split("@")[1];
-      if (dom) {
-        const dIdx = `idx:domain:${dom}`;
-        const dprev = mockGet(dIdx);
-        const dlist = Array.isArray(dprev) ? dprev.map(String) : [];
-        if (!dlist.includes(key)) dlist.push(key);
-        mockPut(dIdx, dlist);
-      }
-    }
-  } else {
-    process.stderr.write(
-      `Publishing ${path.basename(filePath)} → KV key ${key}…\n`
-    );
-    await kvPut({
-      accountId: cfg.accountId,
-      namespaceId: cfg.kvNamespaceId,
-      token: cfg.apiToken,
-      key,
-      value: encodeRecord(record),
-    });
-    // Console API indexes
-    if (publisherEmail) {
-      await appendKvIndex(cfg, `idx:pub:${publisherEmail}`, key);
-      const dom = publisherEmail.split("@")[1];
-      if (dom) await appendKvIndex(cfg, `idx:domain:${dom}`, key);
-    } else if (access.mode === "company" && access.domains?.[0]) {
-      await appendKvIndex(cfg, `idx:domain:${access.domains[0]}`, key);
+  process.stderr.write(
+    `Publishing ${path.basename(filePath)} → mock KV key ${key}…\n`
+  );
+  mockPut(key, record);
+  if (publisherEmail) {
+    const pubIdx = `idx:pub:${publisherEmail}`;
+    const prev = mockGet(pubIdx);
+    const list = Array.isArray(prev) ? prev.map(String) : [];
+    if (!list.includes(key)) list.push(key);
+    mockPut(pubIdx, list);
+    const dom = publisherEmail.split("@")[1];
+    if (dom) {
+      const dIdx = `idx:domain:${dom}`;
+      const dprev = mockGet(dIdx);
+      const dlist = Array.isArray(dprev) ? dprev.map(String) : [];
+      if (!dlist.includes(key)) dlist.push(key);
+      mockPut(dIdx, dlist);
     }
   }
 
