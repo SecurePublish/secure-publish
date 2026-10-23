@@ -94,6 +94,10 @@ export const MESSAGES = {
     pt: "Ignorei a opção mock do .secure-publish.json. O modo de teste só liga pela variável SECURE_PUBLISH_MOCK=1.",
     en: "Ignored the mock option in .secure-publish.json. Test mode only turns on with SECURE_PUBLISH_MOCK=1.",
   },
+  removedMockFlag: {
+    pt: "A opção --mock não existe mais, então não publiquei nada. Para testar sem publicar, rode o comando com a variável SECURE_PUBLISH_MOCK=1.",
+    en: "The --mock option no longer exists, so nothing was published. To test without publishing, run the command with SECURE_PUBLISH_MOCK=1.",
+  },
   mockPublishSuccess: {
     pt: "Publicado só nesta máquina, em modo de teste. Ninguém da empresa consegue abrir este link.",
     en: "Published only on this machine, in test mode. No one at your company can open this link.",

@@ -22,7 +22,7 @@ import {
   sanitizeServerText,
   serverSizeErrorMessage,
 } from "./upload-limit.js";
-import { message, loginFailMessage, NPX_CLI } from "./messages.js";
+import { message, loginFailMessage, NPX_CLI, thrownErrorLine } from "./messages.js";
 
 /** Sarah-final CLI login copy. Swap these strings only. */
 const LOGIN_PROMPT = {
@@ -93,8 +93,8 @@ function parseArgs(argv) {
       args.flags.to = argv[++i] ?? "";
     } else if (a === "--remote") {
       args.flags.remote = true;
-    } else if (a === "--mock") {
-      /* ignored: mock is env-only (SECURE_PUBLISH_MOCK=1) */
+    } else if (a === "--mock" || a.startsWith("--mock=")) {
+      args.flags.removedMock = true;
     } else if (a === "--port") {
       args.flags.port = argv[++i] ?? "8787";
     } else if (a === "--lang") {
@@ -871,6 +871,12 @@ async function cmdMockServe(flags, cfg) {
 
 export async function main(argv) {
   const args = parseArgs(argv);
+  const lang = cliLang(args.flags);
+  if (args.flags.removedMock) {
+    console.error(thrownErrorLine(new Error(message("removedMockFlag", lang)), lang));
+    process.exitCode = 1;
+    return;
+  }
   const cmd = args._[0];
 
   if (!cmd || args.flags.help || cmd === "help" || cmd === "--help") {
@@ -879,7 +885,6 @@ export async function main(argv) {
   }
 
   const cfg = loadConfig();
-  const lang = cliLang(args.flags);
   if (cfg.ignoredProjectMock) {
     console.error(message("ignoredProjectMock", lang));
   }

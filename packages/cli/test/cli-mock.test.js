@@ -66,6 +66,7 @@ describe("mock is env-only", () => {
   let origCwd;
   let origFetch;
   let origMock;
+  let origExitCode;
   let htmlPath;
   let calls;
 
@@ -74,9 +75,11 @@ describe("mock is env-only", () => {
     origHome = process.env.HOME;
     origCwd = process.cwd();
     origMock = process.env.SECURE_PUBLISH_MOCK;
+    origExitCode = process.exitCode;
     delete process.env.SECURE_PUBLISH_MOCK;
     process.env.HOME = tmp;
     process.chdir(tmp);
+    process.exitCode = 0;
     htmlPath = path.join(tmp, "dash.html");
     fs.writeFileSync(htmlPath, "<html>hi</html>\n");
     calls = [];
@@ -89,6 +92,7 @@ describe("mock is env-only", () => {
     if (origMock === undefined) delete process.env.SECURE_PUBLISH_MOCK;
     else process.env.SECURE_PUBLISH_MOCK = origMock;
     globalThis.fetch = origFetch;
+    process.exitCode = origExitCode;
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
@@ -163,16 +167,42 @@ describe("mock is env-only", () => {
     assert.doesNotMatch(out, /whole company/);
   });
 
-  it("--mock without the env var still hits the real API", async () => {
+  it("publish --mock without the env var does not POST /api/panels and exits 1", async () => {
     writeSession(tmp);
     mockApi();
     const out = await withIo(() => main(["publish", htmlPath, "--title", "Painel", "--mock"]));
-    assert.ok(
+    assert.equal(process.exitCode, 1);
+    assert.equal(
       calls.some((c) => c.init?.method === "POST" && String(c.url).endsWith("/api/panels")),
-      "--mock must not enable local mock"
+      false,
+      "--mock must not POST /api/panels"
     );
-    assert.match(out, /Publicado pra \*\*toda a empresa\*\*/);
-    assert.doesNotMatch(out, /Publicado só nesta máquina/);
+    assert.equal(calls.length, 0, "--mock must make zero network calls");
+    assert.equal(out, `Erro: ${MESSAGES.removedMockFlag.pt}`);
+    assert.doesNotMatch(out, /toda a empresa/);
     assert.equal(mockList(tmp).length, 0);
+  });
+
+  it("publish --mock with SECURE_PUBLISH_MOCK=1 still exits 1 and publishes nothing", async () => {
+    process.env.SECURE_PUBLISH_MOCK = "1";
+    globalThis.fetch = async () => {
+      throw new Error("--mock must not call the API even when env mock is on");
+    };
+    const out = await withIo(() => main(["publish", htmlPath, "--title", "Painel", "--mock"]));
+    assert.equal(process.exitCode, 1);
+    assert.equal(out, `Erro: ${MESSAGES.removedMockFlag.pt}`);
+    assert.doesNotMatch(out, /toda a empresa|só nesta máquina/);
+    assert.equal(mockList(tmp).length, 0);
+  });
+
+  it("publish --mock --lang en prints the English error with Error: prefix", async () => {
+    writeSession(tmp);
+    mockApi();
+    const out = await withIo(() =>
+      main(["publish", htmlPath, "--title", "Painel", "--mock", "--lang", "en"])
+    );
+    assert.equal(process.exitCode, 1);
+    assert.equal(calls.length, 0);
+    assert.equal(out, `Error: ${MESSAGES.removedMockFlag.en}`);
   });
 });
