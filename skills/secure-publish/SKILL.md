@@ -33,7 +33,8 @@ There is no web “publish” button. The console only tracks URLs and views.
 
 ## Requisitos
 
-Node 22 LTS (`node -v`). `npx skills add` needs 22 (verified on v22.23.3; the skills CLI crashes on Node 20). The CLI itself runs on Node 20+. If `node -v` is older, install Node 22 LTS from https://nodejs.org.
+Node 22 LTS (`node -v`). `npx skills add` needs 22 (verified on v22.23.3; the skills CLI crashes on Node 20). The CLI itself runs on Node 20+. If `node -v` is older, install Node 22 LTS from
+https://nodejs.org
 
 Install the skill (already used by the landing):
 
@@ -72,11 +73,15 @@ If this machine is not signed in yet, run `login` then `login --finish` as two s
 
 You MUST show the `user_code` from the CLI output to the user (replace `{user_code}`). Do not invent a code.
 
-> Vou abrir o login. Na página que abrir, entre com a conta da empresa e digite o código {user_code}.
+> Vou abrir o login. Na página que abrir, entre com a conta da empresa e digite este código:
+>
+> {user_code}
 
 EN:
 
-> I'll open the sign-in page. Sign in with your company account and enter the code {user_code}.
+> I'll open the sign-in page. Sign in with your company account and enter this code:
+>
+> {user_code}
 
 3. Then run `npx --yes @securepublish/cli@1.0.4 login --finish` (also directly, no output filter/wrapper) and wait for it to complete.
 
@@ -86,7 +91,11 @@ When `login --finish` succeeds and printed a host, say exactly:
 
 Use the host the command printed. Do not invent one.
 
-If the CLI says the company does not have an address yet, or if `host:` is empty after login, send the person https://app.securepublish.work/app/hosting.html, tell them that is where they choose the company address, and stop. Do not try to publish again until they confirm they chose one.
+If the CLI says the company does not have an address yet, or if `host:` is empty after login, send the person
+
+https://app.securepublish.work/app/hosting.html
+
+tell them that is where they choose the company address, and stop. Do not try to publish again until they confirm they chose one.
 
 When a host is present, publish:
 
@@ -122,7 +131,11 @@ If they passed emails:
 
 If the CLI refuses the publish because of size (or exits after a 413), show the user the CLI message as written. Do not invent a file size, a limit, or tips. Do not retry the same file. Do not use the generic line below for this case.
 
-If the CLI says the company does not have an address yet, or if `host:` is empty after login, send the person https://app.securepublish.work/app/hosting.html, tell them that is where they choose the company address, and stop. Do not try to publish again until they confirm they chose one. Do not use the generic line below for this case.
+If the CLI says the company does not have an address yet, or if `host:` is empty after login, send the person
+
+https://app.securepublish.work/app/hosting.html
+
+tell them that is where they choose the company address, and stop. Do not try to publish again until they confirm they chose one. Do not use the generic line below for this case.
 
 If the CLI says the session expired or to run login again, go back to the login steps. Do not use the generic line below for this case.
 

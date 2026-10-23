@@ -25,6 +25,11 @@ function runLines(intro, command, afterIntro, afterCommand) {
   return out;
 }
 
+/** Keep https URLs on their own line so no "." or "," is glued to them. */
+function urlOwnLine(before, url, after) {
+  return `${before}\n${url}\n${after}`;
+}
+
 export const MESSAGES = {
   errorPrefix: {
     pt: "Erro:",
@@ -79,16 +84,40 @@ export const MESSAGES = {
     en: "You're signed out on this machine.",
   },
   noHostLogin: {
-    pt: "Login feito. Falta só um passo, que você faz uma vez só: escolher o endereço da sua empresa, como suaempresa.securepublish.work. Escolha em https://app.securepublish.work/app/hosting.html e depois volte aqui pra publicar.",
-    en: "You're signed in. One step left, and you only do it once: choose your company's address, like yourcompany.securepublish.work. Choose it at https://app.securepublish.work/app/hosting.html, then come back here to publish.",
+    pt: urlOwnLine(
+      "Login feito. Falta só um passo, que você faz uma vez só: escolher o endereço da sua empresa, como suaempresa.securepublish.work. Escolha em",
+      "https://app.securepublish.work/app/hosting.html",
+      "e depois volte aqui pra publicar."
+    ),
+    en: urlOwnLine(
+      "You're signed in. One step left, and you only do it once: choose your company's address, like yourcompany.securepublish.work. Choose it at",
+      "https://app.securepublish.work/app/hosting.html",
+      "then come back here to publish."
+    ),
   },
   noHostPublish: {
-    pt: "Ainda não publiquei: sua empresa não tem um endereço no Secure Publish. Escolha um em https://app.securepublish.work/app/hosting.html e tente publicar de novo. Isso só precisa ser feito uma vez.",
-    en: "Not published yet: your company doesn't have a Secure Publish address. Choose one at https://app.securepublish.work/app/hosting.html and try publishing again. You only need to do this once.",
+    pt: urlOwnLine(
+      "Ainda não publiquei: sua empresa não tem um endereço no Secure Publish. Escolha um em",
+      "https://app.securepublish.work/app/hosting.html",
+      "e tente publicar de novo. Isso só precisa ser feito uma vez."
+    ),
+    en: urlOwnLine(
+      "Not published yet: your company doesn't have a Secure Publish address. Choose one at",
+      "https://app.securepublish.work/app/hosting.html",
+      "and try publishing again. You only need to do this once."
+    ),
   },
   noHostRename: {
-    pt: "Ainda não renomeei: sua empresa não tem um endereço no Secure Publish. Escolha um em https://app.securepublish.work/app/hosting.html e tente de novo. Isso só precisa ser feito uma vez.",
-    en: "Not renamed yet: your company doesn't have a Secure Publish address. Choose one at https://app.securepublish.work/app/hosting.html and try again. You only need to do this once.",
+    pt: urlOwnLine(
+      "Ainda não renomeei: sua empresa não tem um endereço no Secure Publish. Escolha um em",
+      "https://app.securepublish.work/app/hosting.html",
+      "e tente de novo. Isso só precisa ser feito uma vez."
+    ),
+    en: urlOwnLine(
+      "Not renamed yet: your company doesn't have a Secure Publish address. Choose one at",
+      "https://app.securepublish.work/app/hosting.html",
+      "and try again. You only need to do this once."
+    ),
   },
   ignoredProjectMock: {
     pt: "Ignorei a opção mock do .secure-publish.json. O modo de teste só liga pela variável SECURE_PUBLISH_MOCK=1.",

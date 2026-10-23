@@ -197,7 +197,7 @@ describe("skill documents npm package invocations only", () => {
   it("keeps user-facing Portuguese lines unchanged", () => {
     assert.match(
       skill,
-      /Vou abrir o login\. Na página que abrir, entre com a conta da empresa e digite o código \{user_code\}\./
+      /Vou abrir o login\. Na página que abrir, entre com a conta da empresa e digite este código:\n>\n> \{user_code\}/
     );
     assert.match(skill, /Conta ligada\. Publicando em \{host\}, aberto pra empresa\./);
     assert.match(

@@ -67,7 +67,7 @@ const pubCompany = await run(
 note("--- publish company (no --to) ---");
 note(pubCompany.stderr.trim());
 note(pubCompany.stdout.trim());
-const companyKey = pubCompany.stdout.match(/key:\s+(\S+)/)?.[1];
+const companyKey = pubCompany.stdout.match(/key:\s*\n(\S+)/)?.[1];
 if (!companyKey) throw new Error("no company key");
 
 const pubTo = await run(
@@ -85,7 +85,7 @@ note("");
 note("--- publish --to ---");
 note(pubTo.stderr.trim());
 note(pubTo.stdout.trim());
-const toKey = pubTo.stdout.match(/key:\s+(\S+)/)?.[1];
+const toKey = pubTo.stdout.match(/key:\s*\n(\S+)/)?.[1];
 if (!toKey) throw new Error("no --to key");
 
 const server = spawn(

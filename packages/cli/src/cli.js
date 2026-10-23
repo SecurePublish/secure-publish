@@ -27,11 +27,17 @@ import { message, loginFailMessage, NPX_CLI, thrownErrorLine } from "./messages.
 /** Sarah-final CLI login copy. Swap these strings only. */
 const LOGIN_PROMPT = {
   pt: [
-    "Pra entrar nesta máquina, abra {url} e digite o código {user_code}.",
+    "Para entrar nesta máquina, abra:",
+    "{url}",
+    "e digite este código:",
+    "{user_code}",
     "Só digite se foi você que rodou este comando agora.",
   ],
   en: [
-    "To connect this computer to your account, open {url} and enter the code {user_code}.",
+    "To sign in on this machine, open:",
+    "{url}",
+    "and enter this code:",
+    "{user_code}",
     "Only enter it if you just ran this command yourself.",
   ],
 };
@@ -326,11 +332,11 @@ async function cmdLoginStart(cfg, flags = {}) {
     expiresAt: new Date(Date.now() + (Number(start.expires_in) || 600) * 1000).toISOString(),
     apiBase,
   });
-  const [line1, line2] = LOGIN_PROMPT[lang];
-  console.log(
-    line1.replace("{url}", start.verification_url).replace("{user_code}", start.user_code)
-  );
-  console.log(line2);
+  for (const line of LOGIN_PROMPT[lang]) {
+    console.log(
+      line.replace("{url}", start.verification_url).replace("{user_code}", start.user_code)
+    );
+  }
   openLoginUrl(start.verification_url);
   await flushStdio();
 }
@@ -506,7 +512,7 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
       lang
     )
   );
-  console.log(`key:    ${data.id}`);
+  printCopyValue("key:", data.id);
   console.log(`title:  ${entry.title}`);
   console.log(`host:   ${data.host || host}`);
   return entry;
@@ -595,7 +601,7 @@ async function cmdPublish(fileArg, flags, cfg) {
   upsertPanel(entry);
 
   console.log(message("mockPublishSuccess", lang));
-  console.log(`key:    ${key}`);
+  printCopyValue("key:", key);
   console.log(`title:  ${title}`);
   console.log(
     `access: ${
@@ -688,8 +694,9 @@ async function cmdRename(ref, flags, cfg) {
   return data;
 }
 
-function revokeSuccessMessage(id) {
-  return `Removed ${id}.`;
+function printCopyValue(label, value) {
+  console.log(label);
+  console.log(value);
 }
 
 async function cmdRevoke(ref, cfg, flags) {
@@ -703,7 +710,7 @@ async function cmdRevoke(ref, cfg, flags) {
   if (useMock) {
     mockDelete(id);
     removePanel(id);
-    console.log(revokeSuccessMessage(id));
+    printCopyValue("Removed:", id);
     return;
   }
 
@@ -736,7 +743,7 @@ async function cmdRevoke(ref, cfg, flags) {
   }
 
   removePanel(id);
-  console.log(revokeSuccessMessage(id));
+  printCopyValue("Removed:", id);
 }
 
 async function cmdDoctor(cfg, flags = {}) {

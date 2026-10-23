@@ -149,7 +149,7 @@ describe("CLI revoke via session DELETE", () => {
     assert.equal(calls[0].url, `https://app.securepublish.work/api/panels/${panelId}`);
     assert.equal(calls[0].init.method, "DELETE");
     assert.equal(calls[0].init.headers.authorization, `Bearer ${token()}`);
-    assert.match(out, new RegExp(`Removed ${panelId}\\.`));
+    assert.match(out, new RegExp(`^Removed:\\n${panelId}$`, "m"));
     assert.deepEqual(readRegistry(tmp).panels, []);
     assert.equal(fs.existsSync(sessionPath(tmp)), true);
   });
@@ -190,7 +190,7 @@ describe("CLI revoke via session DELETE", () => {
     const out = await withIo(() => main(["revoke", panelId]));
     assert.equal(calls.length, 1);
     assert.equal(calls[0].init.method, "DELETE");
-    assert.match(out, new RegExp(`Removed ${panelId}\\.`));
+    assert.match(out, new RegExp(`^Removed:\\n${panelId}$`, "m"));
     assert.deepEqual(readRegistry(tmp).panels, []);
   });
 
@@ -242,6 +242,6 @@ describe("CLI revoke via session DELETE", () => {
     }
     assert.equal(mockGet(panelId), null);
     assert.deepEqual(readRegistry(tmp).panels, []);
-    assert.match(out, new RegExp(`Removed ${panelId}\\.`));
+    assert.match(out, new RegExp(`^Removed:\\n${panelId}$`, "m"));
   });
 });

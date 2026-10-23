@@ -248,6 +248,7 @@ describe("CLI session expiry is server-authoritative", () => {
       () => main(["publish", htmlPath, "--title", "Painel"]),
       (e) => {
         assert.equal(e.message, MESSAGES.noHostPublish.pt);
+        assert.doesNotMatch(e.message, /https?:\/\/\S+[.,](?:\s|$)/);
         assert.doesNotMatch(e.message, /Tente de novo em instantes/);
         return true;
       }

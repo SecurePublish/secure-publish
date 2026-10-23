@@ -179,8 +179,12 @@ describe("CLI device login / logout", () => {
     const logs = await withIo(() => main(["login"]));
     assert.match(
       logs,
-      /Pra entrar nesta máquina, abra https:\/\/app\.securepublish\.work\/device e digite o código BCDF-GHJK\./
+      /Para entrar nesta máquina, abra:\nhttps:\/\/app\.securepublish\.work\/device\ne digite este código:\nBCDF-GHJK/
     );
+    assert.match(logs, /^https:\/\/app\.securepublish\.work\/device$/m);
+    assert.match(logs, /^BCDF-GHJK$/m);
+    assert.doesNotMatch(logs, /https:\/\/app\.securepublish\.work\/device[.,]/);
+    assert.doesNotMatch(logs, /BCDF-GHJK[.,]/);
     assert.match(logs, /Só digite se foi você que rodou este comando agora\./);
     assert.equal(logs.includes(device_code), false);
     assert.equal(tokenHits, 0);
@@ -248,8 +252,12 @@ describe("CLI device login / logout", () => {
     const logs = await withIo(() => main(["login", "--lang", "en"]));
     assert.match(
       logs,
-      /To connect this computer to your account, open https:\/\/app\.securepublish\.work\/device and enter the code LMNP-QRST\./
+      /To sign in on this machine, open:\nhttps:\/\/app\.securepublish\.work\/device\nand enter this code:\nLMNP-QRST/
     );
+    assert.match(logs, /^https:\/\/app\.securepublish\.work\/device$/m);
+    assert.match(logs, /^LMNP-QRST$/m);
+    assert.doesNotMatch(logs, /https:\/\/app\.securepublish\.work\/device[.,]/);
+    assert.doesNotMatch(logs, /LMNP-QRST[.,]/);
     assert.match(logs, /Only enter it if you just ran this command yourself\./);
     assert.equal(fs.existsSync(sessionPath(tmp)), false);
     assert.equal(process.exitCode || 0, 0);
@@ -292,9 +300,9 @@ describe("CLI device login / logout", () => {
 
   it("login --finish with empty host stores the session and tells the user to choose an address (PT/EN)", async () => {
     const noHostPt =
-      "Login feito. Falta só um passo, que você faz uma vez só: escolher o endereço da sua empresa, como suaempresa.securepublish.work. Escolha em https://app.securepublish.work/app/hosting.html e depois volte aqui pra publicar.";
+      "Login feito. Falta só um passo, que você faz uma vez só: escolher o endereço da sua empresa, como suaempresa.securepublish.work. Escolha em\nhttps://app.securepublish.work/app/hosting.html\ne depois volte aqui pra publicar.";
     const noHostEn =
-      "You're signed in. One step left, and you only do it once: choose your company's address, like yourcompany.securepublish.work. Choose it at https://app.securepublish.work/app/hosting.html, then come back here to publish.";
+      "You're signed in. One step left, and you only do it once: choose your company's address, like yourcompany.securepublish.work. Choose it at\nhttps://app.securepublish.work/app/hosting.html\nthen come back here to publish.";
 
     const approveEmptyHost = async () => {
       writePending(tmp, { interval: 1 });
@@ -315,6 +323,7 @@ describe("CLI device login / logout", () => {
     const pt = await withIo(() => main(["login", "--finish"]));
     assert.match(pt, /^host:\s*$/m);
     assert.equal(pt.includes(noHostPt), true);
+    assert.doesNotMatch(pt, /https?:\/\/\S+[.,](?:\s|$)/);
     assert.equal(fs.existsSync(sessionPath(tmp)), true);
     assert.equal(process.exitCode || 0, 0);
 
@@ -434,7 +443,7 @@ describe("CLI device login / logout", () => {
       throw new Error(`unexpected fetch ${u}`);
     };
     const logs = await withIo(() => main(["login", "--wait"]));
-    assert.match(logs, /digite o código BCDF-GHJK/);
+    assert.match(logs, /e digite este código:\nBCDF-GHJK/);
     assert.match(logs, /email: ana@empresa.com/);
     assert.ok(fs.existsSync(sessionPath(tmp)));
     assert.equal(fs.existsSync(pendingPath(tmp)), false);
@@ -478,7 +487,8 @@ describe("CLI device login / logout", () => {
       const elapsed = Date.now() - started;
       assert.equal(r.status, 0, r.stderr);
       assert.match(r.stdout, /https:\/\/app\.securepublish\.work\/device/);
-      assert.match(r.stdout, /WXYZ-ABCD/);
+      assert.match(r.stdout, /^WXYZ-ABCD$/m);
+      assert.doesNotMatch(r.stdout, /WXYZ-ABCD[.,]/);
       assert.equal(r.stdout.includes(device_code), false);
       assert.ok(elapsed < 3000, `start blocked too long (${elapsed}ms)`);
       assert.equal(tokenHits, 0);
