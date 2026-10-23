@@ -85,29 +85,48 @@ function generateKey() {
   return crypto.randomBytes(12).toString("hex");
 }
 
+function isRemovedMockArg(v) {
+  return typeof v === "string" && v.startsWith("--mock");
+}
+
+function takeFlagValue(argv, i, flags, key, fallback) {
+  const next = argv[i + 1];
+  if (isRemovedMockArg(next)) {
+    flags.removedMock = true;
+    return i + 1;
+  }
+  flags[key] = next ?? fallback;
+  return i + 1;
+}
+
 function parseArgs(argv) {
   const args = { _: [], flags: {} };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--title" || a === "-t") {
-      args.flags.title = argv[++i] ?? "";
+      i = takeFlagValue(argv, i, args.flags, "title", "");
     } else if (a === "--name") {
-      args.flags.name = argv[++i] ?? "";
+      i = takeFlagValue(argv, i, args.flags, "name", "");
     } else if (a === "--no-name") {
       args.flags.noName = true;
     } else if (a === "--to") {
-      args.flags.to = argv[++i] ?? "";
+      i = takeFlagValue(argv, i, args.flags, "to", "");
     } else if (a === "--remote") {
       args.flags.remote = true;
-    } else if (a === "--mock" || a.startsWith("--mock=")) {
+    } else if (isRemovedMockArg(a)) {
       args.flags.removedMock = true;
     } else if (a === "--port") {
-      args.flags.port = argv[++i] ?? "8787";
+      i = takeFlagValue(argv, i, args.flags, "port", "8787");
     } else if (a === "--lang") {
-      args.flags.lang = argv[++i] ?? "pt";
+      i = takeFlagValue(argv, i, args.flags, "lang", "pt");
     } else if (a === "--help" || a === "-h") {
       args.flags.help = true;
     } else if (a.startsWith("--")) {
+      const eq = a.indexOf("=");
+      if (eq !== -1 && isRemovedMockArg(a.slice(eq + 1))) {
+        args.flags.removedMock = true;
+        continue;
+      }
       const key = a.slice(2);
       const next = argv[i + 1];
       if (next && !next.startsWith("-")) {

@@ -44,6 +44,22 @@ async function withIo(fn) {
   }
 }
 
+async function withSplitIo(fn) {
+  const stdout = [];
+  const stderr = [];
+  const origLog = console.log;
+  const origErr = console.error;
+  console.log = (...a) => stdout.push(a.map(String).join(" "));
+  console.error = (...a) => stderr.push(a.map(String).join(" "));
+  try {
+    await fn();
+    return { stdout: stdout.join("\n"), stderr: stderr.join("\n") };
+  } finally {
+    console.log = origLog;
+    console.error = origErr;
+  }
+}
+
 function okPublishResponse() {
   return new Response(
     JSON.stringify({
@@ -205,4 +221,31 @@ describe("mock is env-only", () => {
     assert.equal(calls.length, 0);
     assert.equal(out, `Error: ${MESSAGES.removedMockFlag.en}`);
   });
+
+  const valueOptionCases = [
+    ["--title", ["publish", null, "--title", "--mock"]],
+    ["-t", ["publish", null, "-t", "--mock"]],
+    ["--name", ["publish", null, "--name", "--mock"]],
+    ["--to", ["publish", null, "--to", "--mock"]],
+    ["--lang", ["publish", null, "--lang", "--mock"]],
+    ["--port", ["publish", null, "--port", "--mock"]],
+    ["--title --mock=", ["publish", null, "--title", "--mock=1"]],
+    ["--title=--mock", ["publish", null, "--title=--mock"]],
+  ];
+
+  for (const [label, argvTemplate] of valueOptionCases) {
+    it(`publish ${label} treats --mock as the removed flag, not a value`, async () => {
+      writeSession(tmp);
+      mockApi();
+      const argv = argvTemplate.map((a) => (a === null ? htmlPath : a));
+      const { stdout, stderr } = await withSplitIo(() => main(argv));
+      assert.equal(process.exitCode, 1);
+      assert.equal(stdout, "", "must print nothing on stdout");
+      assert.equal(stderr, `Erro: ${MESSAGES.removedMockFlag.pt}`);
+      assert.equal(calls.length, 0, "must make zero network calls");
+      assert.equal(mockList(tmp).length, 0);
+      assert.equal(fs.existsSync(path.join(tmp, ".secure-publish", "registry.json")), false);
+      assert.equal(fs.existsSync(path.join(tmp, ".secure-publish", "session.json")), true);
+    });
+  }
 });
