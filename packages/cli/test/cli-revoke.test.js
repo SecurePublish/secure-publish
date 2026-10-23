@@ -168,7 +168,7 @@ describe("CLI revoke via session DELETE", () => {
     mockDeleteResponse(401, { error: "unauthorized" });
     await assert.rejects(
       () => main(["revoke", panelId]),
-      /Conta não ligada nesta máquina\. Rode securepublish-cli login\./
+      /Sua sessão expirou ou foi encerrada\. Rode securepublish-cli login para entrar de novo\./
     );
     assert.equal(fs.existsSync(sessionPath(tmp)), false);
     assert.equal(readRegistry(tmp).panels[0].key, panelId);

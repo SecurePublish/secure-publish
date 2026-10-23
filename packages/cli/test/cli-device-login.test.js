@@ -284,6 +284,46 @@ describe("CLI device login / logout", () => {
     assert.equal(session.email, "ana@empresa.com");
     assert.equal(fs.statSync(sessionPath(tmp)).mode & 0o777, 0o600);
     assert.equal(process.exitCode || 0, 0);
+    assert.doesNotMatch(
+      logs,
+      /app\.securepublish\.work\/app\/hosting\.html/
+    );
+  });
+
+  it("login --finish with empty host stores the session and tells the user to choose an address (PT/EN)", async () => {
+    const noHostPt =
+      "Login feito. Falta só um passo, que você faz uma vez só: escolher o endereço da sua empresa, como suaempresa.securepublish.work. Escolha em https://app.securepublish.work/app/hosting.html e depois volte aqui pra publicar.";
+    const noHostEn =
+      "You're signed in. One step left, and you only do it once: choose your company's address, like yourcompany.securepublish.work. Choose it at https://app.securepublish.work/app/hosting.html, then come back here to publish.";
+
+    const approveEmptyHost = async () => {
+      writePending(tmp, { interval: 1 });
+      globalThis.fetch = async () =>
+        new Response(
+          JSON.stringify({
+            access_token: token(),
+            token_type: "Bearer",
+            email: "ana@empresa.com",
+            host: "",
+            expires_in: 43200,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+    };
+
+    await approveEmptyHost();
+    const pt = await withIo(() => main(["login", "--finish"]));
+    assert.match(pt, /^host:\s*$/m);
+    assert.equal(pt.includes(noHostPt), true);
+    assert.equal(fs.existsSync(sessionPath(tmp)), true);
+    assert.equal(process.exitCode || 0, 0);
+
+    process.exitCode = 0;
+    await approveEmptyHost();
+    const en = await withIo(() => main(["login", "--finish", "--lang", "en"]));
+    assert.match(en, /^host:\s*$/m);
+    assert.equal(en.includes(noHostEn), true);
+    assert.equal(fs.existsSync(sessionPath(tmp)), true);
   });
 
   it("login --finish expired uses login_expired and PT/EN messages", async () => {

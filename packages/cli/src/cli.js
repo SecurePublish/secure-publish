@@ -22,6 +22,7 @@ import {
   sanitizeServerText,
   serverSizeErrorMessage,
 } from "./upload-limit.js";
+import { message } from "./messages.js";
 
 const CLI = "securepublish-cli";
 
@@ -204,7 +205,6 @@ function readPublishSession() {
     const raw = JSON.parse(fs.readFileSync(sessionFile(), "utf8"));
     const publishToken = String(raw?.publishToken || "").trim();
     if (!/^[a-f0-9]{64}$/.test(publishToken)) return null;
-    if (raw.expiresAt && Date.parse(raw.expiresAt) <= Date.now()) return null;
     return {
       publishToken,
       email: raw.email || null,
@@ -289,6 +289,21 @@ function flushStream(stream) {
 async function flushStdio() {
   await flushStream(process.stdout);
   await flushStream(process.stderr);
+}
+
+function apiErrorCode(data) {
+  return typeof data?.error === "string" ? data.error : "";
+}
+
+function throwIfNoHost(data, lang) {
+  if (apiErrorCode(data) !== "no_host") return;
+  throw new Error(message("noHostPublish", lang));
+}
+
+function throwIfSessionUnauthorized(status, lang) {
+  if (status !== 401) return;
+  clearPublishSession();
+  throw new Error(message("sessionExpired", lang));
 }
 
 function loginFail(code, lang) {
@@ -388,8 +403,12 @@ async function cmdLoginFinish(cfg, flags = {}) {
       });
       clearPendingDevice();
       if (poll.email) console.log(`email: ${poll.email}`);
-      if (poll.host) console.log(`host: ${poll.host}`);
-      else console.log("host:");
+      const host = String(poll.host || "").trim();
+      if (host) console.log(`host: ${host}`);
+      else {
+        console.log("host:");
+        console.log(message("noHostLogin", lang));
+      }
       return;
     }
     if (poll.error === "authorization_pending") continue;
@@ -484,8 +503,9 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
   if (res.status === 413) {
     throw new Error(serverSizeErrorMessage(raw, lang));
   }
+  throwIfNoHost(data, lang);
+  throwIfSessionUnauthorized(res.status, lang);
   if (!res.ok) {
-    if (res.status === 401) clearPublishSession();
     const where = host ? ` A conta está ligada em ${host}.` : "";
     throw new Error(`Não consegui publicar agora.${where} Tenta de novo em instantes.`);
   }
@@ -684,8 +704,10 @@ async function cmdRename(ref, flags, cfg) {
   });
   const data = await res.json().catch(() => ({}));
   const host = data.host || session.host || "";
+  const lang = cliLang(flags);
+  throwIfNoHost(data, lang);
+  throwIfSessionUnauthorized(res.status, lang);
   if (!res.ok) {
-    if (res.status === 401) clearPublishSession();
     const where = host ? ` A conta está ligada em ${host}.` : "";
     throw new Error(`Não consegui alterar o nome agora.${where} Tenta de novo em instantes.`);
   }
@@ -736,10 +758,7 @@ async function cmdRevoke(ref, cfg, flags) {
     throw new Error("Couldn't reach Secure Publish. Check your connection and try again.");
   }
 
-  if (res.status === 401) {
-    clearPublishSession();
-    throw new Error(`Conta não ligada nesta máquina. Rode ${CLI} login.`);
-  }
+  throwIfSessionUnauthorized(res.status, cliLang(flags));
   if (res.status === 403) {
     throw new Error(
       "only the person who published this link or the company account owner can remove it"

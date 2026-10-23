@@ -80,11 +80,13 @@ EN:
 
 3. Then run `npx --yes @securepublish/cli@1.0.4 login --finish` (also directly, no output filter/wrapper) and wait for it to complete.
 
-When `login --finish` succeeds, say exactly:
+When `login --finish` succeeds and printed a host, say exactly:
 
 > Conta ligada. Publicando em {host}, aberto pra empresa.
 
-Use the host the command printed. If there is no host yet, ask where to publish. Do not invent one.
+Use the host the command printed. Do not invent one.
+
+If the CLI says the company does not have an address yet, or if `host:` is empty after login, send the person https://app.securepublish.work/app/hosting.html, tell them that is where they choose the company address, and stop. Do not try to publish again until they confirm they chose one.
 
 Then publish:
 
@@ -119,6 +121,8 @@ If they passed emails:
 > Publicado só para {emails}: {url}
 
 If the CLI refuses the publish because of size (or exits after a 413), show the user the CLI message as written. Do not invent a file size, a limit, or tips. Do not retry the same file. Do not use the generic line below for this case.
+
+If the CLI says the company does not have an address yet, or if `host:` is empty after login, send the person https://app.securepublish.work/app/hosting.html, tell them that is where they choose the company address, and stop. Do not try to publish again until they confirm they chose one. Do not use the generic line below for this case.
 
 On any other failure, say exactly:
 
