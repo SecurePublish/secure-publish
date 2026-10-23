@@ -22,7 +22,7 @@ import {
   sanitizeServerText,
   serverSizeErrorMessage,
 } from "./upload-limit.js";
-import { message } from "./messages.js";
+import { message, NPX_CLI } from "./messages.js";
 
 const CLI = "securepublish-cli";
 
@@ -50,16 +50,16 @@ const LOGIN_ERRORS = {
     en: "Couldn't connect the account right now. Try again in a moment.",
   },
   login_expired: {
-    pt: "Não consegui ligar a conta agora. O código expirou. Rode login de novo.",
-    en: "Couldn't connect the account. The code expired. Run login again.",
+    pt: `Não consegui ligar a conta agora. O código expirou. Rode ${NPX_CLI} login de novo.`,
+    en: `Couldn't connect the account. The code expired. Run ${NPX_CLI} login again.`,
   },
   login_denied: {
     pt: "Não consegui ligar a conta agora. O login foi recusado no navegador.",
     en: "Couldn't connect the account. Sign-in was denied in the browser.",
   },
   login_no_pending: {
-    pt: "Não há um login em andamento. Rode login, depois login --finish.",
-    en: "There is no login in progress. Run login, then login --finish.",
+    pt: `Não há um login em andamento. Rode ${NPX_CLI} login, depois ${NPX_CLI} login --finish.`,
+    en: `There is no login in progress. Run ${NPX_CLI} login, then ${NPX_CLI} login --finish.`,
   },
 };
 
@@ -77,18 +77,18 @@ Auth model:
     --to a@x,b@y       explicit email allowlist (still requires sign-in)
 
 Usage:
-  ${CLI} login
-  ${CLI} login --finish
-  ${CLI} login --wait
-  ${CLI} publish <file.html> [--title "..."] [--name "..."] [--to email,email] [--mock]
-  ${CLI} rename <id-or-url> --name <text>
-  ${CLI} rename <id-or-url> --no-name
-  ${CLI} logout
-  ${CLI} list
-  ${CLI} revoke <id-or-url>
-  ${CLI} doctor
-  ${CLI} mock-serve [--port 8787]
-  ${CLI} help
+  ${NPX_CLI} login
+  ${NPX_CLI} login --finish
+  ${NPX_CLI} login --wait
+  ${NPX_CLI} publish <file.html> [--title "..."] [--name "..."] [--to email,email] [--mock]
+  ${NPX_CLI} rename <id-or-url> --name <text>
+  ${NPX_CLI} rename <id-or-url> --no-name
+  ${NPX_CLI} logout
+  ${NPX_CLI} list
+  ${NPX_CLI} revoke <id-or-url>
+  ${NPX_CLI} doctor
+  ${NPX_CLI} mock-serve [--port 8787]
+  ${NPX_CLI} help
 
 Run \`login\` to print the URL and code (it flushes and exits at once), enter the code in the browser, then \`login --finish\`. Publishing and revoke use that account. \`login --wait\` keeps the old blocking flow.
 Only the person who published a link or the company account owner can revoke it.
@@ -464,7 +464,7 @@ async function cmdLogout(cfg, flags = {}) {
 async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
   const session = readPublishSession();
   if (!session) {
-    throw new Error(`Conta não ligada nesta máquina. Rode ${CLI} login.`);
+    throw new Error(message("notLoggedIn", cliLang(flags)));
   }
   const apiBase = (session.apiBase || apiBaseOf(cfg)).replace(/\/$/, "");
   const title =
@@ -542,7 +542,7 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
 async function cmdPublish(fileArg, flags, cfg) {
   if (!fileArg) {
     throw new Error(
-      `Usage: ${CLI} publish <file.html> [--title "..."] [--name "..."] [--to email,email]`
+      `Usage: ${NPX_CLI} publish <file.html> [--title "..."] [--name "..."] [--to email,email]`
     );
   }
   const filePath = path.resolve(fileArg);
@@ -679,14 +679,14 @@ export function parsePanelRef(ref) {
 }
 
 async function cmdRename(ref, flags, cfg) {
-  const usage = `Usage: ${CLI} rename <id-or-url> --name <text>`;
+  const usage = `Usage: ${NPX_CLI} rename <id-or-url> --name <text>`;
   if (!ref) throw new Error(usage);
   const clear = flags.noName === true || flags.name === "";
   if (!clear && typeof flags.name !== "string") throw new Error(usage);
 
   const session = readPublishSession();
   if (!session) {
-    throw new Error(`Conta não ligada nesta máquina. Rode ${CLI} login.`);
+    throw new Error(message("notLoggedIn", cliLang(flags)));
   }
 
   const id = parsePanelRef(ref);
@@ -725,7 +725,7 @@ function revokeSuccessMessage(id) {
 }
 
 async function cmdRevoke(ref, cfg, flags) {
-  const usage = `Usage: ${CLI} revoke <id-or-url>`;
+  const usage = `Usage: ${NPX_CLI} revoke <id-or-url>`;
   if (!ref) throw new Error(usage);
 
   const id = parsePanelRef(ref);
@@ -741,7 +741,7 @@ async function cmdRevoke(ref, cfg, flags) {
 
   const session = readPublishSession();
   if (!session) {
-    throw new Error(`Conta não ligada nesta máquina. Rode ${CLI} login.`);
+    throw new Error(message("notLoggedIn", cliLang(flags)));
   }
 
   const apiBase = (session.apiBase || apiBaseOf(cfg)).replace(/\/$/, "");
@@ -776,7 +776,7 @@ async function cmdDoctor(cfg) {
   const lines = [`${CLI} doctor`, "─────────────────────"];
   if (cfg.mock) {
     lines.push("Status: mock mode.");
-    lines.push(`Next: ${CLI} publish <file.html> --mock`);
+    lines.push(`Next: ${NPX_CLI} publish <file.html> --mock`);
     console.log(lines.join("\n"));
     return 0;
   }
@@ -784,10 +784,10 @@ async function cmdDoctor(cfg) {
   if (session) {
     lines.push(`Status: conta ligada${session.email ? " (" + session.email + ")" : ""}.`);
     if (session.host) lines.push(`host: ${session.host}`);
-    lines.push(`Next: ${CLI} publish <file.html>`);
+    lines.push(`Next: ${NPX_CLI} publish <file.html>`);
   } else {
     lines.push("Status: conta não ligada nesta máquina.");
-    lines.push(`Next: ${CLI} login`);
+    lines.push(`Next: ${NPX_CLI} login`);
   }
   console.log(lines.join("\n"));
   return session ? 0 : 1;

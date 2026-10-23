@@ -13,9 +13,9 @@ import { main } from "../src/cli.js";
 const TOKEN = "ab".repeat(32);
 
 const SESSION_EXPIRED_PT =
-  "Sua sessão expirou ou foi encerrada. Rode securepublish-cli login para entrar de novo.";
+  "Sua sessão expirou ou foi encerrada. Rode npx --yes @securepublish/cli@1.0.4 login para entrar de novo.";
 const SESSION_EXPIRED_EN =
-  "Your session expired or was ended. Run securepublish-cli login to sign in again.";
+  "Your session expired or was ended. Run npx --yes @securepublish/cli@1.0.4 login to sign in again.";
 const NO_HOST_PUBLISH_PT =
   "Ainda não publiquei: sua empresa não tem um endereço no Secure Publish. Escolha um em https://app.securepublish.work/app/hosting.html e tente publicar de novo. Isso só precisa ser feito uma vez.";
 const NO_HOST_PUBLISH_EN =

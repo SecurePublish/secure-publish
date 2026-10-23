@@ -168,7 +168,7 @@ describe("CLI revoke via session DELETE", () => {
     mockDeleteResponse(401, { error: "unauthorized" });
     await assert.rejects(
       () => main(["revoke", panelId]),
-      /Sua sessão expirou ou foi encerrada\. Rode securepublish-cli login para entrar de novo\./
+      /Sua sessão expirou ou foi encerrada\. Rode npx --yes @securepublish\/cli@1\.0\.4 login para entrar de novo\./
     );
     assert.equal(fs.existsSync(sessionPath(tmp)), false);
     assert.equal(readRegistry(tmp).panels[0].key, panelId);
@@ -211,12 +211,15 @@ describe("CLI revoke via session DELETE", () => {
     };
     await assert.rejects(
       () => main(["revoke", panelId]),
-      /Conta não ligada nesta máquina\. Rode securepublish-cli login\./
+      /Conta não ligada nesta máquina\. Rode npx --yes @securepublish\/cli@1\.0\.4 login\./
     );
   });
 
   it("usage when the id is missing", async () => {
-    await assert.rejects(() => main(["revoke"]), /Usage: securepublish-cli revoke <id-or-url>/);
+    await assert.rejects(
+      () => main(["revoke"]),
+      /Usage: npx --yes @securepublish\/cli@1\.0\.4 revoke <id-or-url>/
+    );
   });
 
   it("mock mode deletes locally without calling the API or needing Cloudflare credentials", async () => {

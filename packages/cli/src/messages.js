@@ -1,11 +1,19 @@
 /**
  * User-facing CLI copy. Product rewords these strings; keep the keys stable.
+ *
+ * Skill users run the CLI via npx; the bin name is not on PATH.
+ * Same invocation as skills/secure-publish/SKILL.md and README.md.
  */
+export const NPX_CLI = "npx --yes @securepublish/cli@1.0.4";
 
 export const MESSAGES = {
   sessionExpired: {
-    pt: "Sua sessão expirou ou foi encerrada. Rode securepublish-cli login para entrar de novo.",
-    en: "Your session expired or was ended. Run securepublish-cli login to sign in again.",
+    pt: `Sua sessão expirou ou foi encerrada. Rode ${NPX_CLI} login para entrar de novo.`,
+    en: `Your session expired or was ended. Run ${NPX_CLI} login to sign in again.`,
+  },
+  notLoggedIn: {
+    pt: `Conta não ligada nesta máquina. Rode ${NPX_CLI} login.`,
+    en: `This machine is not signed in. Run ${NPX_CLI} login.`,
   },
   noHostLogin: {
     pt: "Login feito. Falta só um passo, que você faz uma vez só: escolher o endereço da sua empresa, como suaempresa.securepublish.work. Escolha em https://app.securepublish.work/app/hosting.html e depois volte aqui pra publicar.",
