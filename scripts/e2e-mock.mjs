@@ -61,7 +61,7 @@ note("NOT Workspace/Entra/GitHub Org membership.");
 note("");
 
 const pubCompany = await run(
-  ["publish", "examples/panel-vendas.html", "--title", "Painel Vendas Q3", "--mock"],
+  ["publish", "examples/panel-vendas.html", "--title", "Painel Vendas Q3"],
   env
 );
 note("--- publish company (no --to) ---");
@@ -78,7 +78,6 @@ const pubTo = await run(
     "Ops",
     "--to",
     "ana@empresa.com,bia@empresa.com",
-    "--mock",
   ],
   env
 );

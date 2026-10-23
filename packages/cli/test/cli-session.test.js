@@ -9,17 +9,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "../src/cli.js";
+import { MESSAGES, NPX_CLI } from "../src/messages.js";
 
 const TOKEN = "ab".repeat(32);
-
-const SESSION_EXPIRED_PT =
-  "Sua sessão expirou ou foi encerrada. Rode npx --yes @securepublish/cli@1.0.4 login para entrar de novo.";
-const SESSION_EXPIRED_EN =
-  "Your session expired or was ended. Run npx --yes @securepublish/cli@1.0.4 login to sign in again.";
-const NO_HOST_PUBLISH_PT =
-  "Ainda não publiquei: sua empresa não tem um endereço no Secure Publish. Escolha um em https://app.securepublish.work/app/hosting.html e tente publicar de novo. Isso só precisa ser feito uma vez.";
-const NO_HOST_PUBLISH_EN =
-  "Not published yet: your company doesn't have a Secure Publish address. Choose one at https://app.securepublish.work/app/hosting.html and try publishing again. You only need to do this once.";
 
 function sessionPath(dir) {
   return path.join(dir, ".secure-publish", "session.json");
@@ -140,8 +132,10 @@ describe("CLI session expiry is server-authoritative", () => {
     await assert.rejects(
       () => main(["publish", htmlPath, "--title", "Painel"]),
       (e) => {
-        assert.equal(e.message, SESSION_EXPIRED_PT);
-        assert.doesNotMatch(e.message, /Tenta de novo em instantes/);
+        assert.equal(e.message, MESSAGES.sessionExpired.pt);
+        assert.equal(e.message.includes(`${NPX_CLI} login`), true);
+        assert.doesNotMatch(e.message, /Tente de novo em instantes/);
+        assert.match(e.message, /\n[^\n]*login$/);
         return true;
       }
     );
@@ -151,9 +145,9 @@ describe("CLI session expiry is server-authoritative", () => {
     await assert.rejects(
       () => main(["publish", htmlPath, "--title", "Painel", "--lang", "en"]),
       (e) => {
-        assert.equal(e.message, SESSION_EXPIRED_EN);
+        assert.equal(e.message, MESSAGES.sessionExpired.en);
         assert.doesNotMatch(e.message, /Try again in a moment/);
-        assert.doesNotMatch(e.message, /Tenta de novo em instantes/);
+        assert.doesNotMatch(e.message, /Tente de novo em instantes/);
         return true;
       }
     );
@@ -171,8 +165,8 @@ describe("CLI session expiry is server-authoritative", () => {
     await assert.rejects(
       () => main(["rename", "k7f3qx2abc", "--name", "x"]),
       (e) => {
-        assert.equal(e.message, SESSION_EXPIRED_PT);
-        assert.doesNotMatch(e.message, /Tenta de novo em instantes/);
+        assert.equal(e.message, MESSAGES.sessionExpired.pt);
+        assert.doesNotMatch(e.message, /Tente de novo em instantes/);
         return true;
       }
     );
@@ -181,7 +175,7 @@ describe("CLI session expiry is server-authoritative", () => {
     await assert.rejects(
       () => main(["rename", "k7f3qx2abc", "--name", "x", "--lang", "en"]),
       (e) => {
-        assert.equal(e.message, SESSION_EXPIRED_EN);
+        assert.equal(e.message, MESSAGES.sessionExpired.en);
         return true;
       }
     );
@@ -199,8 +193,8 @@ describe("CLI session expiry is server-authoritative", () => {
     await assert.rejects(
       () => main(["revoke", "k7f3qx2abc"]),
       (e) => {
-        assert.equal(e.message, SESSION_EXPIRED_PT);
-        assert.doesNotMatch(e.message, /Tenta de novo em instantes/);
+        assert.equal(e.message, MESSAGES.sessionExpired.pt);
+        assert.doesNotMatch(e.message, /Tente de novo em instantes/);
         return true;
       }
     );
@@ -209,7 +203,7 @@ describe("CLI session expiry is server-authoritative", () => {
     await assert.rejects(
       () => main(["revoke", "k7f3qx2abc", "--lang", "en"]),
       (e) => {
-        assert.equal(e.message, SESSION_EXPIRED_EN);
+        assert.equal(e.message, MESSAGES.sessionExpired.en);
         return true;
       }
     );
@@ -226,13 +220,18 @@ describe("CLI session expiry is server-authoritative", () => {
     );
     await assert.rejects(
       () => main(["publish", htmlPath, "--title", "Painel"]),
-      /Não consegui publicar agora\. A conta está ligada em wise\.securepublish\.work\. Tenta de novo em instantes\./
+      /Não consegui publicar agora\. A conta está ligada em wise\.securepublish\.work\. Tente de novo em instantes\./
     );
     assert.equal(fs.existsSync(sessionPath(tmp)), true);
 
     await assert.rejects(
       () => main(["rename", "k7f3qx2abc", "--name", "x"]),
-      /Não consegui alterar o nome agora\. A conta está ligada em wise\.securepublish\.work\. Tenta de novo em instantes\./
+      /Não consegui alterar o nome agora\. A conta está ligada em wise\.securepublish\.work\. Tente de novo em instantes\./
+    );
+
+    await assert.rejects(
+      () => main(["publish", htmlPath, "--title", "Painel", "--lang", "en"]),
+      /Couldn't publish right now\. This account is signed in at wise\.securepublish\.work\. Try again in a moment\./
     );
   });
 
@@ -248,8 +247,8 @@ describe("CLI session expiry is server-authoritative", () => {
     await assert.rejects(
       () => main(["publish", htmlPath, "--title", "Painel"]),
       (e) => {
-        assert.equal(e.message, NO_HOST_PUBLISH_PT);
-        assert.doesNotMatch(e.message, /Tenta de novo em instantes/);
+        assert.equal(e.message, MESSAGES.noHostPublish.pt);
+        assert.doesNotMatch(e.message, /Tente de novo em instantes/);
         return true;
       }
     );
@@ -258,8 +257,8 @@ describe("CLI session expiry is server-authoritative", () => {
     await assert.rejects(
       () => main(["publish", htmlPath, "--title", "Painel", "--lang", "en"]),
       (e) => {
-        assert.equal(e.message, NO_HOST_PUBLISH_EN);
-        assert.doesNotMatch(e.message, /Tenta de novo em instantes/);
+        assert.equal(e.message, MESSAGES.noHostPublish.en);
+        assert.doesNotMatch(e.message, /Tente de novo em instantes/);
         return true;
       }
     );
@@ -275,9 +274,17 @@ describe("CLI session expiry is server-authoritative", () => {
         })
     );
     await assert.rejects(() => main(["rename", "k7f3qx2abc", "--name", "x"]), (e) => {
-      assert.equal(e.message, NO_HOST_PUBLISH_PT);
+      assert.equal(e.message, MESSAGES.noHostRename.pt);
+      assert.doesNotMatch(e.message, /publiquei|publicar/);
       return true;
     });
+    await assert.rejects(
+      () => main(["rename", "k7f3qx2abc", "--name", "x", "--lang", "en"]),
+      (e) => {
+        assert.equal(e.message, MESSAGES.noHostRename.en);
+        return true;
+      }
+    );
   });
 
   it("logout still POSTs /api/session/revoke with a past local expiresAt", async () => {

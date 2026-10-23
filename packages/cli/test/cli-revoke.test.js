@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main, parsePanelRef } from "../src/cli.js";
+import { NPX_CLI } from "../src/messages.js";
 import { mockPut, mockGet } from "../src/mock-store.js";
 
 function token() {
@@ -168,7 +169,7 @@ describe("CLI revoke via session DELETE", () => {
     mockDeleteResponse(401, { error: "unauthorized" });
     await assert.rejects(
       () => main(["revoke", panelId]),
-      /Sua sessão expirou ou foi encerrada\. Rode npx --yes @securepublish\/cli@1\.0\.4 login para entrar de novo\./
+      /Sua sessão expirou ou foi encerrada\. Para entrar de novo, rode:\n[^\n]+ login$/
     );
     assert.equal(fs.existsSync(sessionPath(tmp)), false);
     assert.equal(readRegistry(tmp).panels[0].key, panelId);
@@ -178,7 +179,7 @@ describe("CLI revoke via session DELETE", () => {
     mockDeleteResponse(403, { error: "forbidden" });
     await assert.rejects(
       () => main(["revoke", panelId]),
-      /only the person who published this link or the company account owner can remove it/
+      /só quem publicou este link ou o dono da conta da empresa pode removê-lo/
     );
     assert.equal(fs.existsSync(sessionPath(tmp)), true);
     assert.equal(readRegistry(tmp).panels[0].key, panelId);
@@ -199,7 +200,7 @@ describe("CLI revoke via session DELETE", () => {
     };
     await assert.rejects(
       () => main(["revoke", panelId]),
-      /Couldn't reach Secure Publish\. Check your connection and try again\./
+      /Não consegui falar com o Secure Publish\. Verifique a conexão e tente de novo\./
     );
     assert.equal(readRegistry(tmp).panels[0].key, panelId);
   });
@@ -211,23 +212,34 @@ describe("CLI revoke via session DELETE", () => {
     };
     await assert.rejects(
       () => main(["revoke", panelId]),
-      /Conta não ligada nesta máquina\. Rode npx --yes @securepublish\/cli@1\.0\.4 login\./
+      /Você ainda não entrou nesta máquina\. Para entrar, rode:\n[^\n]+ login$/
     );
   });
 
   it("usage when the id is missing", async () => {
     await assert.rejects(
       () => main(["revoke"]),
-      /Usage: npx --yes @securepublish\/cli@1\.0\.4 revoke <id-or-url>/
+      (e) => {
+        assert.equal(e.message, `Usage: ${NPX_CLI} revoke <id-or-url>`);
+        return true;
+      }
     );
   });
 
   it("mock mode deletes locally without calling the API or needing Cloudflare credentials", async () => {
+    const origMock = process.env.SECURE_PUBLISH_MOCK;
+    process.env.SECURE_PUBLISH_MOCK = "1";
     mockPut(panelId, { v: 1, html: "<p>x</p>", access: { mode: "company", domains: [] } });
     globalThis.fetch = async () => {
       throw new Error("fetch should not run in mock mode");
     };
-    const out = await withIo(() => main(["revoke", panelId, "--mock"]));
+    let out;
+    try {
+      out = await withIo(() => main(["revoke", panelId]));
+    } finally {
+      if (origMock === undefined) delete process.env.SECURE_PUBLISH_MOCK;
+      else process.env.SECURE_PUBLISH_MOCK = origMock;
+    }
     assert.equal(mockGet(panelId), null);
     assert.deepEqual(readRegistry(tmp).panels, []);
     assert.match(out, new RegExp(`Removed ${panelId}\\.`));

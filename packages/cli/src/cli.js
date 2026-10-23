@@ -22,9 +22,7 @@ import {
   sanitizeServerText,
   serverSizeErrorMessage,
 } from "./upload-limit.js";
-import { message, NPX_CLI } from "./messages.js";
-
-const CLI = "securepublish-cli";
+import { message, loginFailMessage, NPX_CLI } from "./messages.js";
 
 /** Sarah-final CLI login copy. Swap these strings only. */
 const LOGIN_PROMPT = {
@@ -38,37 +36,12 @@ const LOGIN_PROMPT = {
   ],
 };
 
-const LOGOUT_KEEP_LOCAL = {
-  pt: "Não consegui desligar a conta agora. Ela continua ligada nesta máquina. Tente de novo em instantes.",
-  en: "Couldn't sign out right now. This machine is still signed in. Try again in a moment.",
-};
-
-/** Stable login error codes (parse `error: <code>`). Messages follow --lang. */
-const LOGIN_ERRORS = {
-  login_failed: {
-    pt: "Não consegui ligar a conta agora. Tenta de novo em instantes.",
-    en: "Couldn't connect the account right now. Try again in a moment.",
-  },
-  login_expired: {
-    pt: `Não consegui ligar a conta agora. O código expirou. Rode ${NPX_CLI} login de novo.`,
-    en: `Couldn't connect the account. The code expired. Run ${NPX_CLI} login again.`,
-  },
-  login_denied: {
-    pt: "Não consegui ligar a conta agora. O login foi recusado no navegador.",
-    en: "Couldn't connect the account. Sign-in was denied in the browser.",
-  },
-  login_no_pending: {
-    pt: `Não há um login em andamento. Rode ${NPX_CLI} login, depois ${NPX_CLI} login --finish.`,
-    en: `There is no login in progress. Run ${NPX_CLI} login, then ${NPX_CLI} login --finish.`,
-  },
-};
-
 function cliLang(flags) {
   return flags?.lang === "en" ? "en" : "pt";
 }
 
 const HELP = `
-${CLI} — publish AI HTML dashboards behind company SSO
+Secure Publish CLI — publish AI HTML dashboards behind company SSO
 
 Auth model:
   The URL path is the panel id — NOT a credential.
@@ -80,7 +53,7 @@ Usage:
   ${NPX_CLI} login
   ${NPX_CLI} login --finish
   ${NPX_CLI} login --wait
-  ${NPX_CLI} publish <file.html> [--title "..."] [--name "..."] [--to email,email] [--mock]
+  ${NPX_CLI} publish <file.html> [--title "..."] [--name "..."] [--to email,email]
   ${NPX_CLI} rename <id-or-url> --name <text>
   ${NPX_CLI} rename <id-or-url> --no-name
   ${NPX_CLI} logout
@@ -90,7 +63,7 @@ Usage:
   ${NPX_CLI} mock-serve [--port 8787]
   ${NPX_CLI} help
 
-Run \`login\` to print the URL and code (it flushes and exits at once), enter the code in the browser, then \`login --finish\`. Publishing and revoke use that account. \`login --wait\` keeps the old blocking flow.
+Run \`${NPX_CLI} login\` to print the URL and code (it flushes and exits at once), enter the code in the browser, then \`${NPX_CLI} login --finish\`. Publishing and revoke use that account. \`${NPX_CLI} login --wait\` keeps the old blocking flow.
 Only the person who published a link or the company account owner can revoke it.
 
 Optional:
@@ -121,7 +94,7 @@ function parseArgs(argv) {
     } else if (a === "--remote") {
       args.flags.remote = true;
     } else if (a === "--mock") {
-      args.flags.mock = true;
+      /* ignored: mock is env-only (SECURE_PUBLISH_MOCK=1) */
     } else if (a === "--port") {
       args.flags.port = argv[++i] ?? "8787";
     } else if (a === "--lang") {
@@ -295,9 +268,9 @@ function apiErrorCode(data) {
   return typeof data?.error === "string" ? data.error : "";
 }
 
-function throwIfNoHost(data, lang) {
+function throwIfNoHost(data, lang, key = "noHostPublish") {
   if (apiErrorCode(data) !== "no_host") return;
-  throw new Error(message("noHostPublish", lang));
+  throw new Error(message(key, lang));
 }
 
 function throwIfSessionUnauthorized(status, lang) {
@@ -307,10 +280,13 @@ function throwIfSessionUnauthorized(status, lang) {
 }
 
 function loginFail(code, lang) {
-  const messages = LOGIN_ERRORS[code] || LOGIN_ERRORS.login_failed;
-  const resolved = LOGIN_ERRORS[code] ? code : "login_failed";
+  const resolved = ["login_failed", "login_expired", "login_denied", "login_no_pending"].includes(
+    code
+  )
+    ? code
+    : "login_failed";
   console.error(`error: ${resolved}`);
-  console.error(messages[lang] || messages.pt);
+  console.error(loginFailMessage(resolved, lang));
   process.exitCode = 1;
 }
 
@@ -394,16 +370,16 @@ async function cmdLoginFinish(cfg, flags = {}) {
     }
     if (pollRes.ok && poll.access_token) {
       const expiresIn = Number(poll.expires_in) || 0;
+      const host = String(poll.host || "").trim() || null;
       writePublishSession({
         publishToken: poll.access_token,
         email: poll.email || null,
-        host: poll.host || null,
+        host,
         apiBase,
         expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
       });
       clearPendingDevice();
       if (poll.email) console.log(`email: ${poll.email}`);
-      const host = String(poll.host || "").trim();
       if (host) console.log(`host: ${host}`);
       else {
         console.log("host:");
@@ -447,18 +423,18 @@ async function cmdLogout(cfg, flags = {}) {
       });
       status = res.status;
     } catch {
-      console.log(LOGOUT_KEEP_LOCAL[lang]);
+      console.log(message("logoutKeepLocal", lang));
       process.exitCode = 1;
       return;
     }
     if (!((status >= 200 && status < 300) || status === 401)) {
-      console.log(LOGOUT_KEEP_LOCAL[lang]);
+      console.log(message("logoutKeepLocal", lang));
       process.exitCode = 1;
       return;
     }
   }
   clearPublishSession();
-  console.log("Conta desligada nesta máquina.");
+  console.log(message("logoutDone", lang));
 }
 
 async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
@@ -503,16 +479,13 @@ async function publishViaAccount(filePath, html, flags, cfg, toEmails) {
   if (res.status === 413) {
     throw new Error(serverSizeErrorMessage(raw, lang));
   }
-  throwIfNoHost(data, lang);
+  throwIfNoHost(data, lang, "noHostPublish");
   throwIfSessionUnauthorized(res.status, lang);
   if (!res.ok) {
-    const where = host ? ` A conta está ligada em ${host}.` : "";
-    throw new Error(`Não consegui publicar agora.${where} Tenta de novo em instantes.`);
+    throw new Error(message("publishRetry", lang, host));
   }
   if (!data.url || !data.id) {
-    throw new Error(
-      `Não consegui publicar agora.${host ? ` A conta está ligada em ${host}.` : ""} Tenta de novo em instantes.`
-    );
+    throw new Error(message("publishRetry", lang, host));
   }
   const entry = {
     key: data.id,
@@ -550,12 +523,10 @@ async function cmdPublish(fileArg, flags, cfg) {
   const html = fs.readFileSync(filePath, "utf8");
   if (!html.trim()) throw new Error("HTML file is empty");
 
-  const useMock = Boolean(flags.mock || cfg.mock);
+  const useMock = Boolean(cfg.mock);
   const toEmails = parseToFlag(flags.to);
   if (flags.to !== undefined && flags.to !== true && toEmails.length === 0) {
-    throw new Error(
-      "Inclua pelo menos um e-mail em --to (ex.: --to ana@empresa.com)"
-    );
+    throw new Error(message("missingToEmail", cliLang(flags)));
   }
 
   const access = buildAccessMeta({
@@ -623,7 +594,7 @@ async function cmdPublish(fileArg, flags, cfg) {
   };
   upsertPanel(entry);
 
-  console.log(publishSuccessMessage({ mode: access.mode, url, emails: toEmails }, lang));
+  console.log(message("mockPublishSuccess", lang));
   console.log(`key:    ${key}`);
   console.log(`title:  ${title}`);
   console.log(
@@ -653,7 +624,7 @@ async function cmdList(flags, cfg) {
     }
   }
 
-  if (flags.remote && (cfg.mock || flags.mock)) {
+  if (flags.remote && cfg.mock) {
     console.log("\nMock store keys:");
     const keys = mockList();
     if (!keys.length) console.log("  (empty)");
@@ -705,16 +676,13 @@ async function cmdRename(ref, flags, cfg) {
   const data = await res.json().catch(() => ({}));
   const host = data.host || session.host || "";
   const lang = cliLang(flags);
-  throwIfNoHost(data, lang);
+  throwIfNoHost(data, lang, "noHostRename");
   throwIfSessionUnauthorized(res.status, lang);
   if (!res.ok) {
-    const where = host ? ` A conta está ligada em ${host}.` : "";
-    throw new Error(`Não consegui alterar o nome agora.${where} Tenta de novo em instantes.`);
+    throw new Error(message("renameRetry", lang, host));
   }
   if (!data.url) {
-    throw new Error(
-      `Não consegui alterar o nome agora.${host ? ` A conta está ligada em ${host}.` : ""} Tenta de novo em instantes.`
-    );
+    throw new Error(message("renameRetry", lang, host));
   }
   console.log(data.url);
   return data;
@@ -731,7 +699,7 @@ async function cmdRevoke(ref, cfg, flags) {
   const id = parsePanelRef(ref);
   if (!id) throw new Error(usage);
 
-  const useMock = Boolean(flags.mock || cfg.mock);
+  const useMock = Boolean(cfg.mock);
   if (useMock) {
     mockDelete(id);
     removePanel(id);
@@ -755,38 +723,38 @@ async function cmdRevoke(ref, cfg, flags) {
       },
     });
   } catch {
-    throw new Error("Couldn't reach Secure Publish. Check your connection and try again.");
+    throw new Error(message("revokeNetwork", cliLang(flags)));
   }
 
-  throwIfSessionUnauthorized(res.status, cliLang(flags));
+  const lang = cliLang(flags);
+  throwIfSessionUnauthorized(res.status, lang);
   if (res.status === 403) {
-    throw new Error(
-      "only the person who published this link or the company account owner can remove it"
-    );
+    throw new Error(message("revokeForbidden", lang));
   }
   if (res.status !== 200 && res.status !== 404) {
-    throw new Error("Couldn't remove this link now. Try again in a moment.");
+    throw new Error(message("revokeRetry", lang));
   }
 
   removePanel(id);
   console.log(revokeSuccessMessage(id));
 }
 
-async function cmdDoctor(cfg) {
-  const lines = [`${CLI} doctor`, "─────────────────────"];
+async function cmdDoctor(cfg, flags = {}) {
+  const lang = cliLang(flags);
+  const lines = ["Secure Publish CLI", "─────────────────────"];
   if (cfg.mock) {
     lines.push("Status: mock mode.");
-    lines.push(`Next: ${NPX_CLI} publish <file.html> --mock`);
+    lines.push(`Next: ${NPX_CLI} publish <file.html>`);
     console.log(lines.join("\n"));
     return 0;
   }
   const session = readPublishSession();
   if (session) {
-    lines.push(`Status: conta ligada${session.email ? " (" + session.email + ")" : ""}.`);
+    lines.push(message("doctorSignedIn", lang, session.email || ""));
     if (session.host) lines.push(`host: ${session.host}`);
     lines.push(`Next: ${NPX_CLI} publish <file.html>`);
   } else {
-    lines.push("Status: conta não ligada nesta máquina.");
+    lines.push(message("doctorNotSignedIn", lang));
     lines.push(`Next: ${NPX_CLI} login`);
   }
   console.log(lines.join("\n"));
@@ -895,7 +863,7 @@ async function cmdMockServe(flags, cfg) {
     server.listen(port, "127.0.0.1", (err) => (err ? reject(err) : resolve()));
   });
   console.log(
-    `${CLI} mock-serve on http://127.0.0.1:${port} (domains: ${companyDomains.join(", ")})`
+    `Secure Publish CLI mock-serve on http://127.0.0.1:${port} (domains: ${companyDomains.join(", ")})`
   );
   console.log("Header X-Mock-User simulates SSO session. Ctrl+C to stop.");
   return server;
@@ -911,7 +879,10 @@ export async function main(argv) {
   }
 
   const cfg = loadConfig();
-  if (args.flags.mock) cfg.mock = true;
+  const lang = cliLang(args.flags);
+  if (cfg.ignoredProjectMock) {
+    console.error(message("ignoredProjectMock", lang));
+  }
 
   switch (cmd) {
     case "login":
@@ -933,7 +904,7 @@ export async function main(argv) {
       await cmdRevoke(args._[1], cfg, args.flags);
       break;
     case "doctor": {
-      const code = await cmdDoctor(cfg);
+      const code = await cmdDoctor(cfg, args.flags);
       if (code) process.exitCode = code;
       break;
     }

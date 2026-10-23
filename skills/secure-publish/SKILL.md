@@ -128,9 +128,9 @@ If the CLI says the session expired or to run login again, go back to the login 
 
 On any other failure, say exactly:
 
-> Não consegui publicar agora. A conta está ligada em {host}. Tenta de novo em instantes.
+> Não consegui publicar agora. A conta está ligada em {host}. Tente de novo em instantes.
 
-If the command says the account is not linked, or that the session expired, go back to the login line. Never ask them for an infrastructure secret.
+If the command says you are not signed in, or that the session expired, go back to the login line. Never ask them for an infrastructure secret.
 
 To revoke, pass the published URL or the panel id to `npx --yes @securepublish/cli@1.0.4 revoke <id-or-url>`. The signed-in account is enough; do not ask for extra credentials. If the CLI says the link is already gone, treat that as success.
 

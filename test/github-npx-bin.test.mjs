@@ -1,8 +1,9 @@
 /**
- * Ensures agents can run OUR CLI via `npx --yes @securepublish/cli@1.0.4`
- * (not the unrelated public npm package named secure-publish).
- * The binary exposed by that install is `securepublish-cli` only.
- * npx does not leave that bin on PATH — docs must use the full npx form.
+ * Ensures agents can run OUR CLI via `npx --yes @securepublish/cli@<version>`
+ * pinned from packages/cli/package.json (not the unrelated public npm package
+ * named secure-publish). The binary exposed by that install is
+ * `securepublish-cli` only. npx does not leave that bin on PATH — docs must
+ * use the full npx form.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -10,13 +11,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { NPX_CLI } from "../packages/cli/src/messages.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BIN_NAME = "securepublish-cli";
 const PKG_NAME = "@securepublish/cli";
-const PKG_VERSION = "1.0.4";
+const PKG_VERSION = JSON.parse(
+  fs.readFileSync(path.join(root, "packages/cli/package.json"), "utf8")
+).version;
 const BIN_REL = `packages/cli/bin/${BIN_NAME}.cjs`;
-const OUR_HELP_MARKER = `${BIN_NAME} — publish AI HTML dashboards behind company SSO`;
+const OUR_HELP_MARKER = `Secure Publish CLI — publish AI HTML dashboards behind company SSO`;
 const NPM_NPX = `npx --yes ${PKG_NAME}@${PKG_VERSION}`;
 const NPM_NPX_RE = NPM_NPX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const GITHUB_HTTPS = "https://github.com/SecurePublish/secure-publish";
@@ -88,6 +92,23 @@ describe("root package exposes CLI for npm", () => {
     assert.doesNotMatch(r.stdout, /CLOUDFLARE_API_TOKEN|CLOUDFLARE_ACCOUNT_ID|kvNamespaceId/);
     assert.doesNotMatch(r.stdout, /api\.cloudflare\.com/);
   });
+
+  it("NPX_CLI is pinned from packages/cli/package.json, never bare or @latest", () => {
+    assert.equal(NPX_CLI, `npx --yes ${PKG_NAME}@${PKG_VERSION}`);
+    assert.doesNotMatch(NPX_CLI, /@latest/);
+    assert.match(NPX_CLI, /^npx --yes @securepublish\/cli@\d+\.\d+\.\d+/);
+  });
+
+  it("bin prefixes thrown errors with Erro: in PT and Error: in EN", () => {
+    const bin = path.join(root, BIN_REL);
+    const pt = spawnSync(process.execPath, [bin, "revoke"], { encoding: "utf8" });
+    assert.notEqual(pt.status, 0);
+    assert.match(pt.stderr, /^Erro: /);
+    const en = spawnSync(process.execPath, [bin, "revoke", "--lang", "en"], { encoding: "utf8" });
+    assert.notEqual(en.status, 0);
+    assert.match(en.stderr, /^Error: /);
+    assert.doesNotMatch(en.stderr, /^Erro: /);
+  });
 });
 
 describe("skill documents npm package invocations only", () => {
@@ -96,7 +117,7 @@ describe("skill documents npm package invocations only", () => {
     "utf8"
   );
 
-  it("documents full npx @securepublish/cli@1.0.4 form for login and publish", () => {
+  it("documents full pinned npx @securepublish/cli@version form for login and publish", () => {
     assert.match(skill, new RegExp(`${NPM_NPX_RE} login`));
     assert.match(skill, new RegExp(`${NPM_NPX_RE} login --finish`));
     assert.match(skill, new RegExp(`${NPM_NPX_RE} publish`));
@@ -154,7 +175,10 @@ describe("skill documents npm package invocations only", () => {
     assert.match(top, /https:\/\/securepublish\.work\/skill\.md/);
     assert.match(top, /https:\/\/securepublish\.work\/cli/);
     assert.match(top, /https:\/\/www\.npmjs\.com\/package\/@securepublish\/cli/);
-    assert.match(top, /unpkg\.com\/browse\/@securepublish\/cli@1\.0\.4/);
+    assert.match(
+      top,
+      new RegExp(`unpkg\\.com/browse/@securepublish/cli@${String(PKG_VERSION).replace(/\./g, "\\.")}`)
+    );
     assert.match(top, /Sobre o login por código/);
     assert.match(
       top,
@@ -184,13 +208,22 @@ describe("skill documents npm package invocations only", () => {
     assert.match(skill, /Publicado só para \{emails\}: \{url\}/);
     assert.match(
       skill,
-      /Não consegui publicar agora\. A conta está ligada em \{host\}\. Tenta de novo em instantes\./
+      /Não consegui publicar agora\. A conta está ligada em \{host\}\. Tente de novo em instantes\./
     );
   });
 
   it("does not tell the agent to say token/KV/cookie/device code/session.json", () => {
     const saySection = skill.split("## What you say")[1]?.split("## Access")[0] ?? "";
     assert.doesNotMatch(saySection, /CLOUDFLARE_API_TOKEN|KV|cookie|device code|session\.json/i);
+  });
+
+  it("pins the same @securepublish/cli version as packages/cli/package.json", () => {
+    const pins = [...skill.matchAll(/@securepublish\/cli@([^\s`"'/]+)/g)].map((m) => m[1]);
+    assert.ok(pins.length > 0, "skill must pin @securepublish/cli@version");
+    for (const v of pins) {
+      assert.notEqual(v, "latest");
+      assert.equal(v, PKG_VERSION, `skill pin @${v} must match CLI package.json ${PKG_VERSION}`);
+    }
   });
 
   it("documents Node 22 LTS in Requisitos", () => {
@@ -205,7 +238,7 @@ describe("skill documents npm package invocations only", () => {
 describe("README documents npm package invocations", () => {
   const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 
-  it("uses full npx @securepublish/cli@1.0.4 form for runnable CLI examples", () => {
+  it("uses full pinned npx @securepublish/cli@version form for runnable CLI examples", () => {
     assert.match(readme, new RegExp(`${NPM_NPX_RE} login`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} login --finish`));
     assert.match(readme, new RegExp(`${NPM_NPX_RE} publish`));
@@ -262,7 +295,10 @@ describe("README documents npm package invocations", () => {
     assert.match(top, /https:\/\/securepublish\.work\/skill\.md/);
     assert.match(top, /https:\/\/securepublish\.work\/cli/);
     assert.match(top, /https:\/\/www\.npmjs\.com\/package\/@securepublish\/cli/);
-    assert.match(top, /unpkg\.com\/browse\/@securepublish\/cli@1\.0\.4/);
+    assert.match(
+      top,
+      new RegExp(`unpkg\\.com/browse/@securepublish/cli@${String(PKG_VERSION).replace(/\./g, "\\.")}`)
+    );
     assert.match(top, /About code sign-in/);
     assert.match(
       top,
@@ -274,6 +310,15 @@ describe("README documents npm package invocations", () => {
     assert.match(top, /https:\/\/securepublish\.work\/pt\/seguranca/);
     assert.doesNotMatch(readme, /100% safe|100% seguro/);
     assert.doesNotMatch(top, /backup/i);
+  });
+
+  it("pins the same @securepublish/cli version as packages/cli/package.json", () => {
+    const pins = [...readme.matchAll(/@securepublish\/cli@([^\s`"'/]+)/g)].map((m) => m[1]);
+    assert.ok(pins.length > 0, "README must pin @securepublish/cli@version");
+    for (const v of pins) {
+      assert.notEqual(v, "latest");
+      assert.equal(v, PKG_VERSION, `README pin @${v} must match CLI package.json ${PKG_VERSION}`);
+    }
   });
 
   it("documents Node 22 LTS in Requisitos", () => {

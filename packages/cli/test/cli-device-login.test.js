@@ -326,6 +326,26 @@ describe("CLI device login / logout", () => {
     assert.equal(fs.existsSync(sessionPath(tmp)), true);
   });
 
+  it("login --finish stores whitespace-only host as null", async () => {
+    writePending(tmp, { interval: 1 });
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          access_token: token(),
+          token_type: "Bearer",
+          email: "ana@empresa.com",
+          host: "  \t  ",
+          expires_in: 43200,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    const logs = await withIo(() => main(["login", "--finish"]));
+    assert.match(logs, /^host:\s*$/m);
+    assert.match(logs, /app\.securepublish\.work\/app\/hosting\.html/);
+    const session = JSON.parse(fs.readFileSync(sessionPath(tmp), "utf8"));
+    assert.equal(session.host, null);
+  });
+
   it("login --finish expired uses login_expired and PT/EN messages", async () => {
     writePending(tmp, { expiresAt: new Date(Date.now() - 1000).toISOString() });
     globalThis.fetch = async () => {
@@ -333,7 +353,8 @@ describe("CLI device login / logout", () => {
     };
     const pt = await withIo(() => main(["login", "--finish"]));
     assert.match(pt, /error: login_expired/);
-    assert.match(pt, /O código expirou/);
+    assert.match(pt, /O pedido de login expirou\. Para começar de novo, rode:/);
+    assert.match(pt, /\n[^\n]+ login$/);
     assert.equal(process.exitCode, 1);
     assert.equal(fs.existsSync(pendingPath(tmp)), false);
 
@@ -341,7 +362,7 @@ describe("CLI device login / logout", () => {
     writePending(tmp, { expiresAt: new Date(Date.now() - 1000).toISOString() });
     const en = await withIo(() => main(["login", "--finish", "--lang", "en"]));
     assert.match(en, /error: login_expired/);
-    assert.match(en, /The code expired/);
+    assert.match(en, /The sign-in request expired\. To start again, run:/);
     assert.equal(process.exitCode, 1);
   });
 
@@ -369,13 +390,15 @@ describe("CLI device login / logout", () => {
   it("login --finish with no pending state uses login_no_pending", async () => {
     const logs = await withIo(() => main(["login", "--finish"]));
     assert.match(logs, /error: login_no_pending/);
-    assert.match(logs, /Não há um login em andamento/);
+    assert.match(logs, /Não tem nenhum login em andamento\. Primeiro rode:/);
+    assert.match(logs, /Quando aprovar no navegador, rode:/);
     assert.equal(process.exitCode, 1);
 
     process.exitCode = 0;
     const en = await withIo(() => main(["login", "--finish", "--lang", "en"]));
     assert.match(en, /error: login_no_pending/);
-    assert.match(en, /There is no login in progress/);
+    assert.match(en, /There's no sign-in in progress\. First run:/);
+    assert.match(en, /Once you approve it in the browser, run:/);
   });
 
   it("login --wait keeps the old blocking start+poll behavior", async () => {

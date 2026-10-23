@@ -1,19 +1,82 @@
 /**
  * User-facing CLI copy. Product rewords these strings; keep the keys stable.
- *
- * Skill users run the CLI via npx; the bin name is not on PATH.
- * Same invocation as skills/secure-publish/SKILL.md and README.md.
+ * Commands that the user should run sit alone on the following line (no punctuation).
  */
-export const NPX_CLI = "npx --yes @securepublish/cli@1.0.4";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+function readPinnedCliVersion() {
+  const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+  const version = String(JSON.parse(fs.readFileSync(pkgPath, "utf8")).version || "").trim();
+  if (!version || version === "latest" || !/^\d+\.\d+\.\d+/.test(version)) {
+    throw new Error("CLI package.json version must be a pinned semver");
+  }
+  return version;
+}
+
+export const CLI_VERSION = readPinnedCliVersion();
+/** Always pinned. Never bare `npx @securepublish/cli` and never `@latest`. */
+export const NPX_CLI = `npx --yes @securepublish/cli@${CLI_VERSION}`;
+
+function runLines(intro, command, afterIntro, afterCommand) {
+  let out = `${intro}\n${command}`;
+  if (afterIntro) out += `\n${afterIntro}\n${afterCommand}`;
+  return out;
+}
 
 export const MESSAGES = {
+  errorPrefix: {
+    pt: "Erro:",
+    en: "Error:",
+  },
   sessionExpired: {
-    pt: `Sua sessão expirou ou foi encerrada. Rode ${NPX_CLI} login para entrar de novo.`,
-    en: `Your session expired or was ended. Run ${NPX_CLI} login to sign in again.`,
+    pt: runLines(
+      "Sua sessão expirou ou foi encerrada. Para entrar de novo, rode:",
+      `${NPX_CLI} login`
+    ),
+    en: runLines(
+      "Your session expired or was ended. To sign in again, run:",
+      `${NPX_CLI} login`
+    ),
   },
   notLoggedIn: {
-    pt: `Conta não ligada nesta máquina. Rode ${NPX_CLI} login.`,
-    en: `This machine is not signed in. Run ${NPX_CLI} login.`,
+    pt: runLines("Você ainda não entrou nesta máquina. Para entrar, rode:", `${NPX_CLI} login`),
+    en: runLines("You're not signed in on this machine yet. To sign in, run:", `${NPX_CLI} login`),
+  },
+  loginFailed: {
+    pt: "Não consegui ligar a conta agora. Tente de novo em instantes.",
+    en: "Couldn't connect the account right now. Try again in a moment.",
+  },
+  loginExpired: {
+    pt: runLines("O pedido de login expirou. Para começar de novo, rode:", `${NPX_CLI} login`),
+    en: runLines("The sign-in request expired. To start again, run:", `${NPX_CLI} login`),
+  },
+  loginDenied: {
+    pt: "Não consegui ligar a conta agora. O login foi recusado no navegador.",
+    en: "Couldn't connect the account. Sign-in was denied in the browser.",
+  },
+  loginNoPending: {
+    pt: runLines(
+      "Não tem nenhum login em andamento. Primeiro rode:",
+      `${NPX_CLI} login`,
+      "Quando aprovar no navegador, rode:",
+      `${NPX_CLI} login --finish`
+    ),
+    en: runLines(
+      "There's no sign-in in progress. First run:",
+      `${NPX_CLI} login`,
+      "Once you approve it in the browser, run:",
+      `${NPX_CLI} login --finish`
+    ),
+  },
+  logoutKeepLocal: {
+    pt: "Não consegui desligar a conta agora. Ela continua ligada nesta máquina. Tente de novo em instantes.",
+    en: "Couldn't sign out right now. This machine is still signed in. Try again in a moment.",
+  },
+  logoutDone: {
+    pt: "Conta desligada nesta máquina.",
+    en: "Signed out on this machine.",
   },
   noHostLogin: {
     pt: "Login feito. Falta só um passo, que você faz uma vez só: escolher o endereço da sua empresa, como suaempresa.securepublish.work. Escolha em https://app.securepublish.work/app/hosting.html e depois volte aqui pra publicar.",
@@ -23,10 +86,91 @@ export const MESSAGES = {
     pt: "Ainda não publiquei: sua empresa não tem um endereço no Secure Publish. Escolha um em https://app.securepublish.work/app/hosting.html e tente publicar de novo. Isso só precisa ser feito uma vez.",
     en: "Not published yet: your company doesn't have a Secure Publish address. Choose one at https://app.securepublish.work/app/hosting.html and try publishing again. You only need to do this once.",
   },
+  noHostRename: {
+    pt: "Ainda não renomeei: sua empresa não tem um endereço no Secure Publish. Escolha um em https://app.securepublish.work/app/hosting.html e tente de novo. Isso só precisa ser feito uma vez.",
+    en: "Not renamed yet: your company doesn't have a Secure Publish address. Choose one at https://app.securepublish.work/app/hosting.html and try again. You only need to do this once.",
+  },
+  ignoredProjectMock: {
+    pt: "Ignorei a opção mock do .secure-publish.json. O modo de teste só liga pela variável SECURE_PUBLISH_MOCK=1.",
+    en: "Ignored the mock option in .secure-publish.json. Test mode only turns on with SECURE_PUBLISH_MOCK=1.",
+  },
+  mockPublishSuccess: {
+    pt: "Publicado só nesta máquina, em modo de teste. Ninguém da empresa consegue abrir este link.",
+    en: "Published only on this machine, in test mode. No one at your company can open this link.",
+  },
+  publishRetry: {
+    pt: (host) =>
+      host
+        ? `Não consegui publicar agora. A conta está ligada em ${host}. Tente de novo em instantes.`
+        : "Não consegui publicar agora. Tente de novo em instantes.",
+    en: (host) =>
+      host
+        ? `Couldn't publish right now. This account is signed in at ${host}. Try again in a moment.`
+        : "Couldn't publish right now. Try again in a moment.",
+  },
+  renameRetry: {
+    pt: (host) =>
+      host
+        ? `Não consegui alterar o nome agora. A conta está ligada em ${host}. Tente de novo em instantes.`
+        : "Não consegui alterar o nome agora. Tente de novo em instantes.",
+    en: (host) =>
+      host
+        ? `Couldn't change the name right now. This account is signed in at ${host}. Try again in a moment.`
+        : "Couldn't change the name right now. Try again in a moment.",
+  },
+  missingToEmail: {
+    pt: "Inclua pelo menos um e-mail em --to (ex.: --to ana@empresa.com)",
+    en: "Include at least one email in --to (e.g. --to ana@empresa.com)",
+  },
+  doctorSignedIn: {
+    pt: (email) => (email ? `Status: conta ligada (${email}).` : "Status: conta ligada."),
+    en: (email) => (email ? `Status: signed in (${email}).` : "Status: signed in."),
+  },
+  doctorNotSignedIn: {
+    pt: "Status: conta não ligada nesta máquina.",
+    en: "Status: not signed in on this machine.",
+  },
+  revokeNetwork: {
+    pt: "Não consegui falar com o Secure Publish. Verifique a conexão e tente de novo.",
+    en: "Couldn't reach Secure Publish. Check your connection and try again.",
+  },
+  revokeForbidden: {
+    pt: "só quem publicou este link ou o dono da conta da empresa pode removê-lo",
+    en: "only the person who published this link or the company account owner can remove it",
+  },
+  revokeRetry: {
+    pt: "Não consegui remover este link agora. Tente de novo em instantes.",
+    en: "Couldn't remove this link now. Try again in a moment.",
+  },
 };
 
-export function message(key, lang) {
+const LOGIN_FAIL_KEYS = {
+  login_failed: "loginFailed",
+  login_expired: "loginExpired",
+  login_denied: "loginDenied",
+  login_no_pending: "loginNoPending",
+};
+
+export function message(key, lang, ...args) {
   const pack = MESSAGES[key];
   if (!pack) return "";
-  return lang === "en" ? pack.en : pack.pt;
+  const val = lang === "en" ? pack.en : pack.pt;
+  return typeof val === "function" ? val(...args) : val;
+}
+
+export function loginFailMessage(code, lang) {
+  const key = LOGIN_FAIL_KEYS[code] || LOGIN_FAIL_KEYS.login_failed;
+  return message(key, lang);
+}
+
+export function langFromArgv(argv) {
+  const list = Array.isArray(argv) ? argv : [];
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] === "--lang") return list[i + 1] === "en" ? "en" : "pt";
+  }
+  return "pt";
+}
+
+export function thrownErrorLine(err, lang) {
+  return `${message("errorPrefix", lang)} ${(err && err.message) || err}`;
 }
