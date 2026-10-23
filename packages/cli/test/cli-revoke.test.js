@@ -179,7 +179,7 @@ describe("CLI revoke via session DELETE", () => {
     mockDeleteResponse(403, { error: "forbidden" });
     await assert.rejects(
       () => main(["revoke", panelId]),
-      /só quem publicou este link ou o dono da conta da empresa pode removê-lo/
+      /Só quem publicou este link ou o dono da conta da empresa pode removê-lo\./
     );
     assert.equal(fs.existsSync(sessionPath(tmp)), true);
     assert.equal(readRegistry(tmp).panels[0].key, panelId);

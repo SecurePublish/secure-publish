@@ -27,7 +27,7 @@ import { message, loginFailMessage, NPX_CLI, thrownErrorLine } from "./messages.
 /** Sarah-final CLI login copy. Swap these strings only. */
 const LOGIN_PROMPT = {
   pt: [
-    "Pra ligar este computador à sua conta, abra {url} e digite o código {user_code}.",
+    "Pra entrar nesta máquina, abra {url} e digite o código {user_code}.",
     "Só digite se foi você que rodou este comando agora.",
   ],
   en: [

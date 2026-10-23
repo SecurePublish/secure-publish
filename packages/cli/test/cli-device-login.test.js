@@ -179,7 +179,7 @@ describe("CLI device login / logout", () => {
     const logs = await withIo(() => main(["login"]));
     assert.match(
       logs,
-      /Pra ligar este computador à sua conta, abra https:\/\/app\.securepublish\.work\/device e digite o código BCDF-GHJK\./
+      /Pra entrar nesta máquina, abra https:\/\/app\.securepublish\.work\/device e digite o código BCDF-GHJK\./
     );
     assert.match(logs, /Só digite se foi você que rodou este comando agora\./);
     assert.equal(logs.includes(device_code), false);
@@ -375,7 +375,8 @@ describe("CLI device login / logout", () => {
       });
     const logs = await withIo(() => main(["login", "--finish"]));
     assert.match(logs, /error: login_denied/);
-    assert.match(logs, /O login foi recusado no navegador/);
+    assert.match(logs, /O login foi recusado no navegador\. Para tentar de novo, rode:/);
+    assert.match(logs, /\n[^\n]+ login$/);
     assert.equal(process.exitCode, 1);
     assert.equal(fs.existsSync(pendingPath(tmp)), false);
     assert.equal(fs.existsSync(sessionPath(tmp)), false);
@@ -384,7 +385,7 @@ describe("CLI device login / logout", () => {
     writePending(tmp, { interval: 1 });
     const en = await withIo(() => main(["login", "--finish", "--lang", "en"]));
     assert.match(en, /error: login_denied/);
-    assert.match(en, /Sign-in was denied in the browser/);
+    assert.match(en, /Sign-in was denied in the browser\. To try again, run:/);
   });
 
   it("login --finish with no pending state uses login_no_pending", async () => {
@@ -496,7 +497,7 @@ describe("CLI device login / logout", () => {
         headers: { "content-type": "application/json" },
       });
     const logs = await withIo(() => main(["logout"]));
-    assert.match(logs, /Conta desligada nesta máquina/);
+    assert.match(logs, /Você saiu da conta nesta máquina/);
     assert.equal(fs.existsSync(sessionPath(tmp)), false);
     assert.equal(process.exitCode || 0, 0);
   });
@@ -509,7 +510,7 @@ describe("CLI device login / logout", () => {
         headers: { "content-type": "application/json" },
       });
     const logs = await withIo(() => main(["logout"]));
-    assert.match(logs, /Conta desligada nesta máquina/);
+    assert.match(logs, /Você saiu da conta nesta máquina/);
     assert.equal(fs.existsSync(sessionPath(tmp)), false);
     assert.equal(process.exitCode || 0, 0);
   });
@@ -520,7 +521,7 @@ describe("CLI device login / logout", () => {
     const logs = await withIo(() => main(["logout"]));
     assert.match(
       logs,
-      /Não consegui desligar a conta agora\. Ela continua ligada nesta máquina\. Tente de novo em instantes\./
+      /Não consegui sair da conta agora\. Esta máquina continua conectada\. Tente de novo em instantes\./
     );
     assert.equal(fs.existsSync(sessionPath(tmp)), true);
     assert.equal(process.exitCode, 1);
@@ -534,7 +535,7 @@ describe("CLI device login / logout", () => {
     const logs = await withIo(() => main(["logout"]));
     assert.match(
       logs,
-      /Não consegui desligar a conta agora\. Ela continua ligada nesta máquina\. Tente de novo em instantes\./
+      /Não consegui sair da conta agora\. Esta máquina continua conectada\. Tente de novo em instantes\./
     );
     assert.equal(fs.existsSync(sessionPath(tmp)), true);
     assert.equal(process.exitCode, 1);

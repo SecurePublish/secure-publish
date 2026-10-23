@@ -220,18 +220,18 @@ describe("CLI session expiry is server-authoritative", () => {
     );
     await assert.rejects(
       () => main(["publish", htmlPath, "--title", "Painel"]),
-      /Não consegui publicar agora\. A conta está ligada em wise\.securepublish\.work\. Tente de novo em instantes\./
+      /Não consegui publicar agora\. Tente de novo em instantes\./
     );
     assert.equal(fs.existsSync(sessionPath(tmp)), true);
 
     await assert.rejects(
       () => main(["rename", "k7f3qx2abc", "--name", "x"]),
-      /Não consegui alterar o nome agora\. A conta está ligada em wise\.securepublish\.work\. Tente de novo em instantes\./
+      /Não consegui alterar o nome agora\. Tente de novo em instantes\./
     );
 
     await assert.rejects(
       () => main(["publish", htmlPath, "--title", "Painel", "--lang", "en"]),
-      /Couldn't publish right now\. This account is signed in at wise\.securepublish\.work\. Try again in a moment\./
+      /Couldn't publish right now\. Try again in a moment\./
     );
   });
 
@@ -295,7 +295,7 @@ describe("CLI session expiry is server-authoritative", () => {
     assert.equal(calls[0].url, "https://app.securepublish.work/api/session/revoke");
     assert.equal(calls[0].init.method, "POST");
     assert.equal(calls[0].init.headers.authorization, `Bearer ${TOKEN}`);
-    assert.match(logs, /Conta desligada nesta máquina/);
+    assert.match(logs, /Você saiu da conta nesta máquina/);
     assert.equal(fs.existsSync(sessionPath(tmp)), false);
   });
 });

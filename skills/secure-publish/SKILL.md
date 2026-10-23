@@ -106,7 +106,7 @@ npx --yes @securepublish/cli@1.0.4 revoke <id-or-url>
 - **Depois do `rename`:** "Pronto, o link agora é {link}. O anterior continua funcionando." / "Done, the link is now {link}. The old one still works."
 - **Depois do `rename` com nome vazio:** "Pronto, o link agora é {link}, sem nome." / "Done, the link is now {link}, with no name."
 - **Depois do `revoke`:** "Pronto, o link foi removido." / "Done, the link is gone."
-- **Se o CLI recusar o revoke (403):** say exactly: "only the person who published this link or the company account owner can remove it"
+- **Se o CLI recusar o revoke (403):** say exactly: "Only the person who published this link or the company account owner can remove it."
 
 Company-wide means the same email domain as the signed-in account. If they did not say who can see it, ask once:
 

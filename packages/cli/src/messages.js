@@ -45,7 +45,7 @@ export const MESSAGES = {
     en: runLines("You're not signed in on this machine yet. To sign in, run:", `${NPX_CLI} login`),
   },
   loginFailed: {
-    pt: "Não consegui ligar a conta agora. Tente de novo em instantes.",
+    pt: "Não consegui fazer o login agora. Tente de novo em instantes.",
     en: "Couldn't connect the account right now. Try again in a moment.",
   },
   loginExpired: {
@@ -53,8 +53,8 @@ export const MESSAGES = {
     en: runLines("The sign-in request expired. To start again, run:", `${NPX_CLI} login`),
   },
   loginDenied: {
-    pt: "Não consegui ligar a conta agora. O login foi recusado no navegador.",
-    en: "Couldn't connect the account. Sign-in was denied in the browser.",
+    pt: runLines("O login foi recusado no navegador. Para tentar de novo, rode:", `${NPX_CLI} login`),
+    en: runLines("Sign-in was denied in the browser. To try again, run:", `${NPX_CLI} login`),
   },
   loginNoPending: {
     pt: runLines(
@@ -71,12 +71,12 @@ export const MESSAGES = {
     ),
   },
   logoutKeepLocal: {
-    pt: "Não consegui desligar a conta agora. Ela continua ligada nesta máquina. Tente de novo em instantes.",
+    pt: "Não consegui sair da conta agora. Esta máquina continua conectada. Tente de novo em instantes.",
     en: "Couldn't sign out right now. This machine is still signed in. Try again in a moment.",
   },
   logoutDone: {
-    pt: "Conta desligada nesta máquina.",
-    en: "Signed out on this machine.",
+    pt: "Você saiu da conta nesta máquina.",
+    en: "You're signed out on this machine.",
   },
   noHostLogin: {
     pt: "Login feito. Falta só um passo, que você faz uma vez só: escolher o endereço da sua empresa, como suaempresa.securepublish.work. Escolha em https://app.securepublish.work/app/hosting.html e depois volte aqui pra publicar.",
@@ -95,43 +95,37 @@ export const MESSAGES = {
     en: "Ignored the mock option in .secure-publish.json. Test mode only turns on with SECURE_PUBLISH_MOCK=1.",
   },
   removedMockFlag: {
-    pt: "A opção --mock não existe mais, então não publiquei nada. Para testar sem publicar, rode o comando com a variável SECURE_PUBLISH_MOCK=1.",
-    en: "The --mock option no longer exists, so nothing was published. To test without publishing, run the command with SECURE_PUBLISH_MOCK=1.",
+    pt: runLines(
+      "Não publiquei nada: a opção --mock não existe mais. Para testar sem publicar de verdade, rode:",
+      `SECURE_PUBLISH_MOCK=1 ${NPX_CLI} publish <arquivo>`
+    ),
+    en: runLines(
+      "Nothing was published: the --mock option no longer exists. To test without really publishing, run:",
+      `SECURE_PUBLISH_MOCK=1 ${NPX_CLI} publish <file>`
+    ),
   },
   mockPublishSuccess: {
     pt: "Publicado só nesta máquina, em modo de teste. Ninguém da empresa consegue abrir este link.",
     en: "Published only on this machine, in test mode. No one at your company can open this link.",
   },
   publishRetry: {
-    pt: (host) =>
-      host
-        ? `Não consegui publicar agora. A conta está ligada em ${host}. Tente de novo em instantes.`
-        : "Não consegui publicar agora. Tente de novo em instantes.",
-    en: (host) =>
-      host
-        ? `Couldn't publish right now. This account is signed in at ${host}. Try again in a moment.`
-        : "Couldn't publish right now. Try again in a moment.",
+    pt: "Não consegui publicar agora. Tente de novo em instantes.",
+    en: "Couldn't publish right now. Try again in a moment.",
   },
   renameRetry: {
-    pt: (host) =>
-      host
-        ? `Não consegui alterar o nome agora. A conta está ligada em ${host}. Tente de novo em instantes.`
-        : "Não consegui alterar o nome agora. Tente de novo em instantes.",
-    en: (host) =>
-      host
-        ? `Couldn't change the name right now. This account is signed in at ${host}. Try again in a moment.`
-        : "Couldn't change the name right now. Try again in a moment.",
+    pt: "Não consegui alterar o nome agora. Tente de novo em instantes.",
+    en: "Couldn't change the name right now. Try again in a moment.",
   },
   missingToEmail: {
-    pt: "Inclua pelo menos um e-mail em --to (ex.: --to ana@empresa.com)",
-    en: "Include at least one email in --to (e.g. --to ana@empresa.com)",
+    pt: "Diga quem pode abrir o link: inclua pelo menos um e-mail em --to, como --to ana@empresa.com.",
+    en: "Say who can open the link: include at least one email in --to, like --to ana@company.com.",
   },
   doctorSignedIn: {
-    pt: (email) => (email ? `Status: conta ligada (${email}).` : "Status: conta ligada."),
+    pt: (email) => `Status: conectado como ${email}.`,
     en: (email) => (email ? `Status: signed in (${email}).` : "Status: signed in."),
   },
   doctorNotSignedIn: {
-    pt: "Status: conta não ligada nesta máquina.",
+    pt: "Status: você ainda não entrou nesta máquina.",
     en: "Status: not signed in on this machine.",
   },
   revokeNetwork: {
@@ -139,12 +133,12 @@ export const MESSAGES = {
     en: "Couldn't reach Secure Publish. Check your connection and try again.",
   },
   revokeForbidden: {
-    pt: "só quem publicou este link ou o dono da conta da empresa pode removê-lo",
-    en: "only the person who published this link or the company account owner can remove it",
+    pt: "Só quem publicou este link ou o dono da conta da empresa pode removê-lo.",
+    en: "Only the person who published this link or the company account owner can remove it.",
   },
   revokeRetry: {
     pt: "Não consegui remover este link agora. Tente de novo em instantes.",
-    en: "Couldn't remove this link now. Try again in a moment.",
+    en: "Couldn't remove this link right now. Try again in a moment.",
   },
 };
 

@@ -95,6 +95,6 @@ describe("public CLI has no Cloudflare KV paths", () => {
     assert.doesNotMatch(out, /kvNamespaceId/);
     assert.doesNotMatch(out, /dash\.cloudflare\.com/);
     assert.doesNotMatch(out, /Workers KV/);
-    assert.match(out, /conta não ligada|conta ligada|mock mode/i);
+    assert.match(out, /ainda não entrou nesta máquina|conectado como|mock mode/i);
   });
 });
