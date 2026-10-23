@@ -88,7 +88,7 @@ Use the host the command printed. Do not invent one.
 
 If the CLI says the company does not have an address yet, or if `host:` is empty after login, send the person https://app.securepublish.work/app/hosting.html, tell them that is where they choose the company address, and stop. Do not try to publish again until they confirm they chose one.
 
-Then publish:
+When a host is present, publish:
 
 ```bash
 npx --yes @securepublish/cli@1.0.4 publish ./dashboard.html --title "Painel" --name "performance-out-26"
@@ -124,11 +124,13 @@ If the CLI refuses the publish because of size (or exits after a 413), show the 
 
 If the CLI says the company does not have an address yet, or if `host:` is empty after login, send the person https://app.securepublish.work/app/hosting.html, tell them that is where they choose the company address, and stop. Do not try to publish again until they confirm they chose one. Do not use the generic line below for this case.
 
+If the CLI says the session expired or to run login again, go back to the login steps. Do not use the generic line below for this case.
+
 On any other failure, say exactly:
 
 > Não consegui publicar agora. A conta está ligada em {host}. Tenta de novo em instantes.
 
-If the command says the account is not linked, go back to the login line. Never ask them for an infrastructure secret.
+If the command says the account is not linked, or that the session expired, go back to the login line. Never ask them for an infrastructure secret.
 
 To revoke, pass the published URL or the panel id to `npx --yes @securepublish/cli@1.0.4 revoke <id-or-url>`. The signed-in account is enough; do not ask for extra credentials. If the CLI says the link is already gone, treat that as success.
 
