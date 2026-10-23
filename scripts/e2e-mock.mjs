@@ -61,13 +61,13 @@ note("NOT Workspace/Entra/GitHub Org membership.");
 note("");
 
 const pubCompany = await run(
-  ["publish", "examples/panel-vendas.html", "--title", "Painel Vendas Q3", "--mock"],
+  ["publish", "examples/panel-vendas.html", "--title", "Painel Vendas Q3"],
   env
 );
 note("--- publish company (no --to) ---");
 note(pubCompany.stderr.trim());
 note(pubCompany.stdout.trim());
-const companyKey = pubCompany.stdout.match(/key:\s+(\S+)/)?.[1];
+const companyKey = pubCompany.stdout.match(/key:\s*\n(\S+)/)?.[1];
 if (!companyKey) throw new Error("no company key");
 
 const pubTo = await run(
@@ -78,7 +78,6 @@ const pubTo = await run(
     "Ops",
     "--to",
     "ana@empresa.com,bia@empresa.com",
-    "--mock",
   ],
   env
 );
@@ -86,7 +85,7 @@ note("");
 note("--- publish --to ---");
 note(pubTo.stderr.trim());
 note(pubTo.stdout.trim());
-const toKey = pubTo.stdout.match(/key:\s+(\S+)/)?.[1];
+const toKey = pubTo.stdout.match(/key:\s*\n(\S+)/)?.[1];
 if (!toKey) throw new Error("no --to key");
 
 const server = spawn(

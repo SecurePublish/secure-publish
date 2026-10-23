@@ -10,6 +10,9 @@ const PROJECT_CONFIG = ".secure-publish.json";
  *   1. Environment variables
  *   2. Project .secure-publish.json (cwd)
  *   3. ~/.secure-publish/config.json
+ *
+ * Mock mode is env-only (`SECURE_PUBLISH_MOCK=1`). A `mock` key in the
+ * project file is ignored (caller prints a warning).
  */
 export function loadConfig(cwd = process.cwd()) {
   const home = readJsonSafe(HOME_CONFIG) || {};
@@ -24,13 +27,12 @@ export function loadConfig(cwd = process.cwd()) {
   );
 
   const mock =
-    process.env.SECURE_PUBLISH_MOCK === "1" ||
-    process.env.SECURE_PUBLISH_MOCK === "true" ||
-    Boolean(merged.mock);
+    process.env.SECURE_PUBLISH_MOCK === "1" || process.env.SECURE_PUBLISH_MOCK === "true";
 
   return {
     companyDomains,
     mock,
+    ignoredProjectMock: Object.prototype.hasOwnProperty.call(project, "mock"),
     homeConfigPath: HOME_CONFIG,
     projectConfigPath: path.join(cwd, PROJECT_CONFIG),
   };

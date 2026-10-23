@@ -9,6 +9,9 @@ import("../src/cli.js")
     return mod.main(process.argv.slice(2));
   })
   .catch(function (err) {
-    console.error("Error: " + ((err && err.message) || err));
-    process.exit(1);
+    return import("../src/messages.js").then(function (m) {
+      var lang = m.langFromArgv(process.argv.slice(2));
+      console.error(m.thrownErrorLine(err, lang));
+      process.exit(1);
+    });
   });

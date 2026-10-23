@@ -171,7 +171,7 @@ describe("CLI named panel links", () => {
     fs.rmSync(path.join(tmp, ".secure-publish", "session.json"));
     await assert.rejects(
       () => main(["rename", "k7f3qx2abc", "--name", "x"]),
-      /Conta não ligada nesta máquina/
+      /Você ainda não entrou nesta máquina/
     );
   });
 });

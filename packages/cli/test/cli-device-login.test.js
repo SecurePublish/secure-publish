@@ -179,8 +179,12 @@ describe("CLI device login / logout", () => {
     const logs = await withIo(() => main(["login"]));
     assert.match(
       logs,
-      /Pra ligar este computador à sua conta, abra https:\/\/app\.securepublish\.work\/device e digite o código BCDF-GHJK\./
+      /Para entrar nesta máquina, abra:\nhttps:\/\/app\.securepublish\.work\/device\ne digite este código:\nBCDF-GHJK/
     );
+    assert.match(logs, /^https:\/\/app\.securepublish\.work\/device$/m);
+    assert.match(logs, /^BCDF-GHJK$/m);
+    assert.doesNotMatch(logs, /https:\/\/app\.securepublish\.work\/device[.,]/);
+    assert.doesNotMatch(logs, /BCDF-GHJK[.,]/);
     assert.match(logs, /Só digite se foi você que rodou este comando agora\./);
     assert.equal(logs.includes(device_code), false);
     assert.equal(tokenHits, 0);
@@ -248,8 +252,12 @@ describe("CLI device login / logout", () => {
     const logs = await withIo(() => main(["login", "--lang", "en"]));
     assert.match(
       logs,
-      /To connect this computer to your account, open https:\/\/app\.securepublish\.work\/device and enter the code LMNP-QRST\./
+      /To sign in on this machine, open:\nhttps:\/\/app\.securepublish\.work\/device\nand enter this code:\nLMNP-QRST/
     );
+    assert.match(logs, /^https:\/\/app\.securepublish\.work\/device$/m);
+    assert.match(logs, /^LMNP-QRST$/m);
+    assert.doesNotMatch(logs, /https:\/\/app\.securepublish\.work\/device[.,]/);
+    assert.doesNotMatch(logs, /LMNP-QRST[.,]/);
     assert.match(logs, /Only enter it if you just ran this command yourself\./);
     assert.equal(fs.existsSync(sessionPath(tmp)), false);
     assert.equal(process.exitCode || 0, 0);
@@ -284,6 +292,67 @@ describe("CLI device login / logout", () => {
     assert.equal(session.email, "ana@empresa.com");
     assert.equal(fs.statSync(sessionPath(tmp)).mode & 0o777, 0o600);
     assert.equal(process.exitCode || 0, 0);
+    assert.doesNotMatch(
+      logs,
+      /app\.securepublish\.work\/app\/hosting\.html/
+    );
+  });
+
+  it("login --finish with empty host stores the session and tells the user to choose an address (PT/EN)", async () => {
+    const noHostPt =
+      "Login feito. Falta só um passo, que você faz uma vez só: escolher o endereço da sua empresa, como suaempresa.securepublish.work. Escolha em\nhttps://app.securepublish.work/app/hosting.html\ne depois volte aqui pra publicar.";
+    const noHostEn =
+      "You're signed in. One step left, and you only do it once: choose your company's address, like yourcompany.securepublish.work. Choose it at\nhttps://app.securepublish.work/app/hosting.html\nthen come back here to publish.";
+
+    const approveEmptyHost = async () => {
+      writePending(tmp, { interval: 1 });
+      globalThis.fetch = async () =>
+        new Response(
+          JSON.stringify({
+            access_token: token(),
+            token_type: "Bearer",
+            email: "ana@empresa.com",
+            host: "",
+            expires_in: 43200,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+    };
+
+    await approveEmptyHost();
+    const pt = await withIo(() => main(["login", "--finish"]));
+    assert.match(pt, /^host:\s*$/m);
+    assert.equal(pt.includes(noHostPt), true);
+    assert.doesNotMatch(pt, /https?:\/\/\S+[.,](?:\s|$)/);
+    assert.equal(fs.existsSync(sessionPath(tmp)), true);
+    assert.equal(process.exitCode || 0, 0);
+
+    process.exitCode = 0;
+    await approveEmptyHost();
+    const en = await withIo(() => main(["login", "--finish", "--lang", "en"]));
+    assert.match(en, /^host:\s*$/m);
+    assert.equal(en.includes(noHostEn), true);
+    assert.equal(fs.existsSync(sessionPath(tmp)), true);
+  });
+
+  it("login --finish stores whitespace-only host as null", async () => {
+    writePending(tmp, { interval: 1 });
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          access_token: token(),
+          token_type: "Bearer",
+          email: "ana@empresa.com",
+          host: "  \t  ",
+          expires_in: 43200,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    const logs = await withIo(() => main(["login", "--finish"]));
+    assert.match(logs, /^host:\s*$/m);
+    assert.match(logs, /app\.securepublish\.work\/app\/hosting\.html/);
+    const session = JSON.parse(fs.readFileSync(sessionPath(tmp), "utf8"));
+    assert.equal(session.host, null);
   });
 
   it("login --finish expired uses login_expired and PT/EN messages", async () => {
@@ -293,7 +362,8 @@ describe("CLI device login / logout", () => {
     };
     const pt = await withIo(() => main(["login", "--finish"]));
     assert.match(pt, /error: login_expired/);
-    assert.match(pt, /O código expirou/);
+    assert.match(pt, /O pedido de login expirou\. Para começar de novo, rode:/);
+    assert.match(pt, /\n[^\n]+ login$/);
     assert.equal(process.exitCode, 1);
     assert.equal(fs.existsSync(pendingPath(tmp)), false);
 
@@ -301,7 +371,7 @@ describe("CLI device login / logout", () => {
     writePending(tmp, { expiresAt: new Date(Date.now() - 1000).toISOString() });
     const en = await withIo(() => main(["login", "--finish", "--lang", "en"]));
     assert.match(en, /error: login_expired/);
-    assert.match(en, /The code expired/);
+    assert.match(en, /The sign-in request expired\. To start again, run:/);
     assert.equal(process.exitCode, 1);
   });
 
@@ -314,7 +384,8 @@ describe("CLI device login / logout", () => {
       });
     const logs = await withIo(() => main(["login", "--finish"]));
     assert.match(logs, /error: login_denied/);
-    assert.match(logs, /O login foi recusado no navegador/);
+    assert.match(logs, /O login foi recusado no navegador\. Para tentar de novo, rode:/);
+    assert.match(logs, /\n[^\n]+ login$/);
     assert.equal(process.exitCode, 1);
     assert.equal(fs.existsSync(pendingPath(tmp)), false);
     assert.equal(fs.existsSync(sessionPath(tmp)), false);
@@ -323,19 +394,21 @@ describe("CLI device login / logout", () => {
     writePending(tmp, { interval: 1 });
     const en = await withIo(() => main(["login", "--finish", "--lang", "en"]));
     assert.match(en, /error: login_denied/);
-    assert.match(en, /Sign-in was denied in the browser/);
+    assert.match(en, /Sign-in was denied in the browser\. To try again, run:/);
   });
 
   it("login --finish with no pending state uses login_no_pending", async () => {
     const logs = await withIo(() => main(["login", "--finish"]));
     assert.match(logs, /error: login_no_pending/);
-    assert.match(logs, /Não há um login em andamento/);
+    assert.match(logs, /Não tem nenhum login em andamento\. Primeiro rode:/);
+    assert.match(logs, /Quando aprovar no navegador, rode:/);
     assert.equal(process.exitCode, 1);
 
     process.exitCode = 0;
     const en = await withIo(() => main(["login", "--finish", "--lang", "en"]));
     assert.match(en, /error: login_no_pending/);
-    assert.match(en, /There is no login in progress/);
+    assert.match(en, /There's no sign-in in progress\. First run:/);
+    assert.match(en, /Once you approve it in the browser, run:/);
   });
 
   it("login --wait keeps the old blocking start+poll behavior", async () => {
@@ -370,7 +443,7 @@ describe("CLI device login / logout", () => {
       throw new Error(`unexpected fetch ${u}`);
     };
     const logs = await withIo(() => main(["login", "--wait"]));
-    assert.match(logs, /digite o código BCDF-GHJK/);
+    assert.match(logs, /e digite este código:\nBCDF-GHJK/);
     assert.match(logs, /email: ana@empresa.com/);
     assert.ok(fs.existsSync(sessionPath(tmp)));
     assert.equal(fs.existsSync(pendingPath(tmp)), false);
@@ -414,7 +487,8 @@ describe("CLI device login / logout", () => {
       const elapsed = Date.now() - started;
       assert.equal(r.status, 0, r.stderr);
       assert.match(r.stdout, /https:\/\/app\.securepublish\.work\/device/);
-      assert.match(r.stdout, /WXYZ-ABCD/);
+      assert.match(r.stdout, /^WXYZ-ABCD$/m);
+      assert.doesNotMatch(r.stdout, /WXYZ-ABCD[.,]/);
       assert.equal(r.stdout.includes(device_code), false);
       assert.ok(elapsed < 3000, `start blocked too long (${elapsed}ms)`);
       assert.equal(tokenHits, 0);
@@ -433,7 +507,7 @@ describe("CLI device login / logout", () => {
         headers: { "content-type": "application/json" },
       });
     const logs = await withIo(() => main(["logout"]));
-    assert.match(logs, /Conta desligada nesta máquina/);
+    assert.match(logs, /Você saiu da conta nesta máquina/);
     assert.equal(fs.existsSync(sessionPath(tmp)), false);
     assert.equal(process.exitCode || 0, 0);
   });
@@ -446,7 +520,7 @@ describe("CLI device login / logout", () => {
         headers: { "content-type": "application/json" },
       });
     const logs = await withIo(() => main(["logout"]));
-    assert.match(logs, /Conta desligada nesta máquina/);
+    assert.match(logs, /Você saiu da conta nesta máquina/);
     assert.equal(fs.existsSync(sessionPath(tmp)), false);
     assert.equal(process.exitCode || 0, 0);
   });
@@ -457,7 +531,7 @@ describe("CLI device login / logout", () => {
     const logs = await withIo(() => main(["logout"]));
     assert.match(
       logs,
-      /Não consegui desligar a conta agora\. Ela continua ligada nesta máquina\. Tente de novo em instantes\./
+      /Não consegui sair da conta agora\. Esta máquina continua conectada\. Tente de novo em instantes\./
     );
     assert.equal(fs.existsSync(sessionPath(tmp)), true);
     assert.equal(process.exitCode, 1);
@@ -471,7 +545,7 @@ describe("CLI device login / logout", () => {
     const logs = await withIo(() => main(["logout"]));
     assert.match(
       logs,
-      /Não consegui desligar a conta agora\. Ela continua ligada nesta máquina\. Tente de novo em instantes\./
+      /Não consegui sair da conta agora\. Esta máquina continua conectada\. Tente de novo em instantes\./
     );
     assert.equal(fs.existsSync(sessionPath(tmp)), true);
     assert.equal(process.exitCode, 1);

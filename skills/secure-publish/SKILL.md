@@ -33,7 +33,8 @@ There is no web “publish” button. The console only tracks URLs and views.
 
 ## Requisitos
 
-Node 22 LTS (`node -v`). `npx skills add` needs 22 (verified on v22.23.3; the skills CLI crashes on Node 20). The CLI itself runs on Node 20+. If `node -v` is older, install Node 22 LTS from https://nodejs.org.
+Node 22 LTS (`node -v`). `npx skills add` needs 22 (verified on v22.23.3; the skills CLI crashes on Node 20). The CLI itself runs on Node 20+. If `node -v` is older, install Node 22 LTS from
+https://nodejs.org
 
 Install the skill (already used by the landing):
 
@@ -72,21 +73,31 @@ If this machine is not signed in yet, run `login` then `login --finish` as two s
 
 You MUST show the `user_code` from the CLI output to the user (replace `{user_code}`). Do not invent a code.
 
-> Vou abrir o login. Na página que abrir, entre com a conta da empresa e digite o código {user_code}.
+> Vou abrir o login. Na página que abrir, entre com a conta da empresa e digite este código:
+>
+> {user_code}
 
 EN:
 
-> I'll open the sign-in page. Sign in with your company account and enter the code {user_code}.
+> I'll open the sign-in page. Sign in with your company account and enter this code:
+>
+> {user_code}
 
 3. Then run `npx --yes @securepublish/cli@1.0.4 login --finish` (also directly, no output filter/wrapper) and wait for it to complete.
 
-When `login --finish` succeeds, say exactly:
+When `login --finish` succeeds and printed a host, say exactly:
 
 > Conta ligada. Publicando em {host}, aberto pra empresa.
 
-Use the host the command printed. If there is no host yet, ask where to publish. Do not invent one.
+Use the host the command printed. Do not invent one.
 
-Then publish:
+If the CLI says the company does not have an address yet, or if `host:` is empty after login, send the person
+
+https://app.securepublish.work/app/hosting.html
+
+tell them that is where they choose the company address, and stop. Do not try to publish again until they confirm they chose one.
+
+When a host is present, publish:
 
 ```bash
 npx --yes @securepublish/cli@1.0.4 publish ./dashboard.html --title "Painel" --name "performance-out-26"
@@ -104,7 +115,7 @@ npx --yes @securepublish/cli@1.0.4 revoke <id-or-url>
 - **Depois do `rename`:** "Pronto, o link agora é {link}. O anterior continua funcionando." / "Done, the link is now {link}. The old one still works."
 - **Depois do `rename` com nome vazio:** "Pronto, o link agora é {link}, sem nome." / "Done, the link is now {link}, with no name."
 - **Depois do `revoke`:** "Pronto, o link foi removido." / "Done, the link is gone."
-- **Se o CLI recusar o revoke (403):** say exactly: "only the person who published this link or the company account owner can remove it"
+- **Se o CLI recusar o revoke (403):** say exactly: "Only the person who published this link or the company account owner can remove it."
 
 Company-wide means the same email domain as the signed-in account. If they did not say who can see it, ask once:
 
@@ -120,11 +131,19 @@ If they passed emails:
 
 If the CLI refuses the publish because of size (or exits after a 413), show the user the CLI message as written. Do not invent a file size, a limit, or tips. Do not retry the same file. Do not use the generic line below for this case.
 
+If the CLI says the company does not have an address yet, or if `host:` is empty after login, send the person
+
+https://app.securepublish.work/app/hosting.html
+
+tell them that is where they choose the company address, and stop. Do not try to publish again until they confirm they chose one. Do not use the generic line below for this case.
+
+If the CLI says the session expired or to run login again, go back to the login steps. Do not use the generic line below for this case.
+
 On any other failure, say exactly:
 
-> Não consegui publicar agora. A conta está ligada em {host}. Tenta de novo em instantes.
+> Não consegui publicar agora. A conta está ligada em {host}. Tente de novo em instantes.
 
-If the command says the account is not linked, go back to the login line. Never ask them for an infrastructure secret.
+If the command says you are not signed in, or that the session expired, go back to the login line. Never ask them for an infrastructure secret.
 
 To revoke, pass the published URL or the panel id to `npx --yes @securepublish/cli@1.0.4 revoke <id-or-url>`. The signed-in account is enough; do not ask for extra credentials. If the CLI says the link is already gone, treat that as success.
 
